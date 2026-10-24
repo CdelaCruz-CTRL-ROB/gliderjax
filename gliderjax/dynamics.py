@@ -1,6 +1,6 @@
 """6-DOF CIDESI glider dynamics (flow-frame damping formulation).
 
-State layout (23,):
+State layout (26,):
     eta   = x[0:6]    [x y z phi theta psi]        (NED, z down)
     nu_r  = x[6:12]   [u v w p q r]                (relative velocity, body)
     actuator chains (prefilter -> rate limiter -> main TF states):
@@ -13,6 +13,7 @@ State layout (23,):
         [20]    v_rl              VBD rate-limiter memory [N]
         [21:23] v_ss(2)           VBD main TF;   dB_f  = vbd_C @ x[21:23]
                                   piston dxv = static VBD map of dB_f
+    ecef  = x[23:26]  truth position, integrated only if cfg.use_geodesy
 """
 from __future__ import annotations
 
@@ -201,9 +202,12 @@ def flow_angles(nu_r):
 def tau_flowframe(p: GliderParams, cfg: ModelConfig, nu_r):
     alpha, beta, V = flow_angles(nu_r)
     V2 = V * V
-    A_MAX = 0.44
-    alpha_e = A_MAX * jnp.tanh(alpha / A_MAX)
-    beta_e = A_MAX * jnp.tanh(beta / A_MAX)
+    if cfg.use_alpha_saturation:        # port guard, NOT in Simulink
+        A_MAX = 0.44
+        alpha_e = A_MAX * jnp.tanh(alpha / A_MAX)
+        beta_e = A_MAX * jnp.tanh(beta / A_MAX)
+    else:                               # Simulink: raw flow angles
+        alpha_e, beta_e = alpha, beta
 
     if cfg.kmr_mode == "signum":        # Simulink: KMR * sign(alpha)
         KMR = p.KMR_mag * jnp.sign(alpha)
@@ -271,7 +275,6 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
     else:
         B_scale, dxb_s, ma_scale, sigma = 1.0, 0.0, 1.0, 0.0
     B_eff = B * B_scale
-    x_b_eff = jnp.where(B_eff > 1e-3, (x_b * B + dxb_s * B_eff) / jnp.maximum(B_eff, 1e-3), 0.0)
     x_b_eff = x_b + dxb_s      # VBD shift + immersed-centroid shift (simple sum)
 
     # disturbance wiring replication: dist enters restoring + C_RB via r_g,
@@ -327,6 +330,7 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
         "tau_drot": tau_dr, "tau_coriolis_rb": tau_crb,
         "tau_CA": tau_ca, "tau_restoring": tau_hs,
         "r_g": r_g_dist, "B": B_eff, "x_b": x_b_eff,
+        "B_net": B_eff - m_tot * G0,      # net buoyancy [N], + = floats
         "B_scale": B_scale if cfg.use_surface_model else jnp.asarray(1.0),
         "sigma_surface": sigma if cfg.use_surface_model else jnp.asarray(0.0),
         "tau_surface": tau_sf, "tau_crossflow": tau_cf,

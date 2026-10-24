@@ -121,6 +121,9 @@ class GliderParams(NamedTuple):
 class ModelConfig:
     kmr_mode: str = "signum"         # "signum" (Simulink) | "parity" | "const"
     kmy_cubic: bool = True
+    use_alpha_saturation: bool = False  # tanh clamp of alpha/beta at ~25 deg
+    #                                     inside tau_flowframe. NOT in Simulink
+    #                                     (added by the port as a guard).
     use_ca_omega: bool = False
     use_ca_translational: bool = False  # Munk block: double counts vs CFD
     use_rot_damping: bool = True
