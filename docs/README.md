@@ -25,8 +25,10 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
     gliderjax_WP_2026-07/             versión v1 con waypoints, intacta
     gliderjax_NO_WP_2026-07/          versión v1 sin waypoints, intacta
   gliderjax/                          VERSIÓN DE TRABAJO (esta)
+    config/
+      cidesi.toml                     TODOS LOS PARÁMETROS y perfiles de switches (editar aquí)
     gliderjax/                        la librería: física, simulador, control, navegación, gráficas
-      params.py                         parámetros (GliderParams) y switches del modelo (ModelConfig)
+      params.py                         estructura de parámetros y switches; lee config/*.toml
       dynamics.py                       ecuaciones de movimiento e hidrodinámica
       sim.py                            integrador RK4, actuadores, simulador
       autopilot.py                      controladores de actitud (PROVISIONALES)
@@ -42,9 +44,28 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
     docs/                             esta documentación
 ```
 
-La librería (`gliderjax/gliderjax/`) es el equivalente de tu `.slx`; los
-scripts (`run_test.py`, `demos/`) son el equivalente de los `.m` que fijan
-parámetros y llaman a la simulación.
+La librería (`gliderjax/gliderjax/`) es el equivalente de tu `.slx`;
+`config/cidesi.toml` es el equivalente del `.m` de parámetros; los scripts
+de `escenarios/` definen la prueba (comandos, condiciones iniciales,
+gráficas) y llaman a la simulación.
+
+## Dónde cambiar qué
+
+| Quiero cambiar… | Dónde |
+|---|---|
+| masas, inercias, masa añadida, coeficientes hidrodinámicos, amortiguamiento | `config/cidesi.toml` |
+| actuadores (FT, limitadores de tasa, saturaciones) | `config/cidesi.toml`, `[actuadores]` y `[masas]` |
+| VBD (diámetro, carrera, estación, flotabilidad neutra) | `config/cidesi.toml`, `[vbd]` |
+| perturbaciones (CG, masa móvil) y corriente | `config/cidesi.toml`, `[perturbaciones]` |
+| qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
+| qué perfil usa una prueba, paso de integración | el script, sección 1 (`MODELO`, `DT`) |
+| comandos, duración, condiciones iniciales | el script, secciones 2 y 3 |
+| ganancias de los controladores (provisionales) | `gliderjax/autopilot.py`, líneas 32-37 |
+| constantes de la FSM de waypoints | `gliderjax/navigation.py`, líneas 20-36 |
+| ecuaciones del modelo | `gliderjax/dynamics.py` (mapa en [MODELO.md](MODELO.md)) |
+
+El archivo de configuración se revisa al cargar: si falta o sobra una
+clave (por ejemplo un error de dedo), da error con el nombre.
 
 ## Cómo correr
 

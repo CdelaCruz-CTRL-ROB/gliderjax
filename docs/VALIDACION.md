@@ -6,11 +6,11 @@ Script: [`escenarios/01_validacion_dinamica.py`](../escenarios/01_validacion_din
 
 ## Qué hace
 
-1. Usa el **modelo equivalente a tu Simulink**, con todos los switches
-   escritos explícitamente: sin superficie, sin crossflow, sin
-   geolocalización, sin saturación de alpha. Además usa la masa añadida
-   completa de tu `Mbr+Ma fcn` (`MA_SIMULINK`) y su rotación de la inercia
-   de la masa rotatoria (`rot_inertia_mode="RtIR"`); ver
+1. Lee los parámetros de [`config/cidesi.toml`](../config/cidesi.toml) y
+   usa su perfil de switches **`simulink`** = tu Simulink: superficie de 2
+   puntos (`fcn_buoyancy_surface`), sin crossflow, sin geolocalización, sin
+   saturación de alpha. Las dos diferencias que se dejaron a propósito
+   (inercia de la masa rotatoria y simetría de la masa añadida) están en
    [MODELO.md](MODELO.md), sección 2.2.
 2. Mueve los actuadores según una **tabla de fases** (comandos constantes
    por tramos, como un Signal Builder).
@@ -29,17 +29,26 @@ Desde `GLIDER_JAX\sim\gliderjax`:
 Tarda ~2 s (incluida la compilación). Con `MOSTRAR = True` las figuras se
 abren al final, con zoom y pan como en MATLAB; el script termina al cerrarlas.
 
-## Dónde cambiar cada cosa (todo está en el script)
+## Dónde cambiar cada cosa
 
-| Quiero cambiar… | Sección del script |
+| Quiero cambiar… | Dónde |
 |---|---|
-| un parámetro físico (KM, masas, MA…) | 1, con `p = p._replace(...)` |
-| un switch del modelo | 2, `ModelConfig(...)` |
-| los comandos o la duración de las fases | 3, tabla `FASES` y `T_FINAL` |
-| profundidad, pitch, velocidad iniciales | 4, `initial_state(...)` |
-| paso de integración o resolución de las gráficas | 5, `DT`, `DECIMATE` |
-| comparar con Simulink | 6, `SIMULINK_CSV` |
-| que no se abran las figuras | 6, `MOSTRAR = False` |
+| un parámetro físico (KM, masas, MA, actuadores, perturbaciones…) | `config/cidesi.toml` |
+| un switch del modelo | `config/cidesi.toml`, perfil `[modelo.simulink]` |
+| usar otro perfil u otro archivo de configuración | script, sección 1: `MODELO`, `CONFIG` |
+| paso de integración o resolución de las gráficas | script, sección 1: `DT`, `DECIMATE` |
+| los comandos o la duración de las fases | script, sección 2: tabla `FASES` y `T_FINAL` |
+| profundidad, pitch, velocidad iniciales | script, sección 3: `initial_state(...)` |
+| comparar con Simulink | script, sección 4: `SIMULINK_CSV` |
+| que no se abran las figuras | script, sección 4: `MOSTRAR = False` |
+
+Cada corrida copia el archivo de configuración usado a
+`out/01_validacion_dinamica/config_usada.toml`, junto con las figuras y la
+telemetría, para saber después con qué parámetros salieron.
+
+Para comparar dos juegos de parámetros sin tocar el original: copiar
+`config/cidesi.toml` (por ejemplo `config/cidesi_KM_mas10.toml`), cambiar
+el valor y apuntar `CONFIG` a la copia.
 
 Para una prueba distinta conviene **copiar el script** con otro nombre (por
 ejemplo `01b_espiral.py`) y cambiar `NOMBRE`, así cada prueba guarda sus
@@ -55,8 +64,9 @@ resultados en su propia carpeta.
 | subida recta | 900 s | −30 mm | 0° | +3 N |
 
 Arranca a 30 m, pitch −0.2 rad, u = 0.2 m/s, actuadores en neutro. Recorre
-de 30 a 252 m y termina a 44 m, lejos de la superficie (que no está
-modelada en esta configuración; el script avisa si se acerca a menos de 2 m).
+de 30 a 252 m y termina a 44 m. Desde 2026-10-24 el perfil `simulink`
+incluye tu modelo de superficie de 2 puntos, así que también se pueden
+probar arranques o llegadas a la superficie.
 
 Prueba longitudinal (planeo de bajada y subida) y lateral (giro con roll e
 inversión del giro) en una sola corrida.
@@ -113,7 +123,7 @@ cuerpo); por eso los números difieren (dψ/dt = (q·sin φ + r·cos φ)/cos θ)
    M = [t, x, y, z, phi, theta, psi, u, v, w, p, q, r];
    writematrix(M, "lazo_abierto.csv");
    ```
-3. Poner la ruta en `SIMULINK_CSV` (sección 6 del script) y correr.
+3. Poner la ruta en `SIMULINK_CSV` (sección 4 del script) y correr.
 
 Salida: la figura `10_jax_vs_simulink.png` y una tabla RMS por estado con
 PASS/FAIL (`validation/compare_simulink.py`). Tolerancias: posición 0.5 m,

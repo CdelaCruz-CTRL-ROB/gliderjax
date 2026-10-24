@@ -12,13 +12,20 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Validar contra una corrida de Simulink exportada a CSV (ver
       [VALIDACION.md](VALIDACION.md)).
 - [x] Comparar contra `Mbr+Ma fcn` y `calculate_coriolis_total_fossen`.
-- [ ] Comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface` y el
-      bloque que arma `r_lin` (¿`r_lin = [0.2861 + rc, 0, 0.001]`?).
-- [ ] Preguntar qué representan los términos fuera de la diagonal de MA
-      (0.1) e IA (0.01), y decidir el default de la librería.
-- [ ] Decidir el default de `rot_inertia_mode` (R·I·Rᵀ es el consistente
-      con `r_rot`; tu Simulink usa Rᵀ·I·R).
-- [ ] Confirmar `BUOY_SIGN` y los demás valores marcados `CONFIRM`.
+- [x] Comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface` y
+      `fcn_r_lin`.
+- [x] Inercia de la masa rotatoria: R·I·Rᵀ (decisión del autor).
+- [x] Masa añadida con simetría babor–estribor (decisión del autor).
+- [x] Archivo de configuración `config/cidesi.toml`.
+- [ ] Confirmar que `B_scale` de la superficie **multiplica** a B (el
+      autor escribió "las sumo a x_b y a B").
+- [ ] ¿Los 0.1 (u–w) y 0.01 (p–r) de la masa añadida son datos o relleno?
+      Si son relleno, ponerlos en 0 en el archivo de configuración.
+- [ ] Verificar el bloque que arma el vector de restauración.
+- [ ] Confirmar `BUOY_SIGN` y los demás valores marcados CONFIRMAR
+      (cadenas de actuadores en `[actuadores]`).
+- [ ] Script de waypoints: pitch de cada inmersión como dato de la misión
+      (sin pitch automático en el VBD).
 - [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
       sin él).
 - [ ] DONE con flotabilidad positiva (confirmar contra V2).
@@ -26,10 +33,70 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Reemplazar controladores provisionales por los bloques de Simulink
       (`Pitch_control`, `Yaw_control`, `Roll control`).
 - [ ] Script de misión por waypoints (`escenarios/02_...`).
-- [ ] Revisar los defaults de `ModelConfig` (hoy superficie, crossflow y
-      geodesia vienen encendidos).
-- [ ] Cheat sheet: "quiero cambiar X → dónde".
+- [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
+      [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (4) — Decisiones del autor, últimas funciones y archivo de configuración
+
+El autor proporcionó `fcn_VBD_actuator`, `fcn_buoyancy_surface` y la
+función que arma `r_lin`. Guardadas en `referencia_simulink/`. Comparación
+en [MODELO.md](MODELO.md), secciones 2.4 a 2.6.
+
+### Decisiones del autor
+
+- **No replicar errores de Simulink.** La inercia de la masa rotatoria
+  queda como `R·I·Rᵀ`; se quitó el switch `rot_inertia_mode`.
+- **Masa añadida con simetría babor–estribor**: se conservan tus 0.1 (u–w)
+  y 0.01 (p–r), y u–v, v–w, p–q, q–r van en cero.
+- **Sin pitch automático en el VBD** (`p_ref = ±con`): el pitch de cada
+  inmersión se da explícitamente.
+- **Parámetros en un archivo de configuración**, no en el script.
+- **"dist" → "disturb"** en los nombres, para no confundir con distancia.
+
+### Commit 1: modelo
+
+- `mass_geometry`: `R·I·Rᵀ` fijo; `r_lin` incluye `disturb_xlin`.
+- `dist_xg`, `dist_yg` → `disturb_xg`, `disturb_yg`; nuevo `disturb_xlin`;
+  `replicate_dist_wiring` → `replicate_disturb_wiring`.
+- `use_surface_model` (bool) → `surface_model`: `"none"`, `"simulink"`
+  (port exacto de `fcn_buoyancy_surface`), `"full"` (el del port).
+- MA por defecto: la simétrica.
+
+Verificación: con MA diagonal y superficie `"none"`, el código nuevo da
+exactamente lo mismo que el commit anterior (diferencia 0.0). Con
+`"simulink"` lejos de la superficie, también 0.0 contra `"none"`.
+
+### Commit 2: archivo de configuración
+
+- `config/cidesi.toml`: todos los valores numéricos, con unidades y origen,
+  más los perfiles de switches `[modelo.simulink]` y `[modelo.completo]`.
+- `params.py`: `load_config(archivo, modelo, dt)`, `load_params`,
+  `load_model`. Revisa que no falte ni sobre ninguna clave y que las
+  matrices de masa añadida sean simétricas. `cidesi_defaults()` ahora lee
+  el archivo (los scripts de v1 siguen funcionando).
+- VBD como en Simulink: `B_neutral = m_displaced·g` (constante, 58 kg) en
+  lugar de la suma de las masas; área con π exacto (`vbd_diam = 0.08`).
+- El script de validación usa `load_config` y guarda una copia del archivo
+  usado en `out/01_validacion_dinamica/config_usada.toml`.
+
+Verificación: todos los parámetros iguales al commit 1, salvo el área del
+pistón (diferencia relativa 1e-9 por π); diferencia en la simulación de
+4.5e-8 m. Un error de dedo (`KDO`) o una clave faltante dan error con el
+nombre. `run_test.py` sigue terminando a 139.9 m.
+
+### Experimentos
+
+| Prueba | Resultado |
+|---|---|
+| MA simétrica vs diagonal (validación, 1200 s) | 1.2 cm horizontal, 0.01° yaw |
+| MA de Simulink completa vs diagonal | 0.38 m horizontal, 0.13° yaw |
+| `disturb_xlin = 5 mm` | pitch de bajada −38.5° → −44.5°, de subida +36.6° → +29.1° |
+| subida a la superficie, `"simulink"` vs `"full"` | ambos flotan a z ≈ 0.13 m con B_scale 0.995; pitch +2.1° vs +3.2° |
+
+La tabla por fase del script de validación no cambia en ningún decimal.
 
 ---
 

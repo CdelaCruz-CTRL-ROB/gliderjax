@@ -1,0 +1,190 @@
+# =============================================================================
+# Planeador CIDESI–UNINDETEC: TODOS los valores numéricos del modelo
+# =============================================================================
+# Este archivo es la única fuente de los parámetros. Lo leen
+# params.load_config() (escenarios) y params.cidesi_defaults() (scripts v1).
+# Editar aquí y volver a correr: cambiar un valor NO recompila.
+#
+# - Unidades SI, ángulos en radianes.
+# - Marco cuerpo: x adelante, y estribor, z abajo. Origen en el centro de
+#   flotación con el VBD en neutro (rb_neutral = [0,0,0] en fcn_VBD_actuator).
+# - Inercias: lista de 3 números = diagonal; lista de 3 filas = matriz completa.
+#   Masa añadida: lista de 6 = diagonal; lista de 6 filas = matriz completa.
+# - Al cargar se revisa que no falte ni sobre ninguna clave (errores de dedo).
+# - Origen de cada valor: docs/MODELO.md. Código de Simulink de referencia:
+#   docs/referencia_simulink/.
+# - "CONFIRMAR" = valor puesto por el port, falta compararlo con Simulink.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+[masas]                     # Mbr+Ma fcn (fcn_Mbr_Ma.m) y fcn_r_lin.m
+# -----------------------------------------------------------------------------
+m_static = 37.0                             # [kg] casco y componentes fijos
+r_static = [-0.1241, 0.0, 0.001]            # [m] centro de masa del casco
+I_static = [0.9, 21.0, 21.0]                # [kg m^2] sobre su propio CM
+
+m_lin = 15.0                                # [kg] masa móvil (pitch)
+r_lin0 = [0.2861, 0.0, 0.001]               # [m] centro virtual con rc = 0
+I_lin = [0.02, 10.16, 0.17]                 # [kg m^2]
+dx_lin_max = 0.10                           # [m] saturación del comando rc
+
+m_rot = 5.0                                 # [kg] masa rotatoria (roll)
+x_rot = 0.2                                 # [m] estación en x
+R_rot = 0.07                                # [m] radio: r_rot = [x_rot, -R sin g, R cos g]
+I_rot = [0.00241296, 0.00207504, 0.00422813]  # [kg m^2] en su marco (g = 0)
+gamma_max = 1.5707963267948966              # [rad] saturación del comando gamma (pi/2)
+w_rot_max = 0.5                             # NO SE USA (la tasa es actuadores.rot_rate)
+
+m_pist = 1.0                                # [kg] pistón del VBD
+I_pist = [4.5521678e-4, 1.245908523e-2, 1.245908523e-2]  # [kg m^2]
+
+
+# -----------------------------------------------------------------------------
+[vbd]                       # fcn_VBD_actuator.m
+# -----------------------------------------------------------------------------
+m_displaced = 58.0          # [kg] agua desplazada con el pistón en neutro:
+#                             B_neutral = m_displaced * g (Simulink: W_total = 58*9.81).
+#                             Si cambias masas y no esto, el planeador queda
+#                             fuera de neutro (como pasaría en la realidad).
+vbd_diam = 0.08             # [m] diámetro del pistón  -> área = pi (d/2)^2
+vbd_stroke = 0.200          # [m] carrera total        -> desplazamiento ±carrera/2
+vbd_x0 = -0.7               # [m] estación del pistón: r_p = [x0 + dx, 0, 0]
+vbd_rate = 0.01             # NO SE USA (la tasa es actuadores.vbd_rate_N)
+
+
+# -----------------------------------------------------------------------------
+[actuadores]                # sim.py::move_actuators
+# -----------------------------------------------------------------------------
+# Cada canal: [prefiltro] -> [limitador de tasa] -> [FT principal] -> salida.
+# FT continuas tal cual los bloques Transfer Fcn:
+#   400/(s^2+30s+400)  ->  { num = [400.0], den = [1.0, 30.0, 400.0] }
+# Se discretizan (ZOH exacto) con el dt del simulador al cargar.
+mass_rate = 0.008                                    # [m/s] masa móvil
+mass_tf = { num = [400.0], den = [1.0, 30.0, 400.0] }
+
+rot_pre_tf = { num = [1.0], den = [0.1, 1.0] }       # prefiltro (ayuda numérica)
+rot_rate = 0.5                                       # [rad/s]  CONFIRMAR
+rot_tf = { num = [400.0], den = [1.0, 30.0, 400.0] }
+
+vbd_pre_tf = { num = [1.0], den = [0.2, 1.0] }       # prefiltro (ayuda numérica)
+vbd_rate_N = 0.5                                     # [N/s]    CONFIRMAR
+vbd_tf = { num = [1.0], den = [2.0, 1.0] }           # CONFIRMAR
+
+
+# -----------------------------------------------------------------------------
+[masa_anadida]              # Mbr+Ma fcn: M_A = [MA, CA; CA', IA], orden [u v w p q r]
+# -----------------------------------------------------------------------------
+# Tus valores de Simulink con simetría babor-estribor: se conservan los
+# acoplamientos u-w (0.1) y p-r (0.01); u-v, v-w, p-q, q-r en cero.
+# La matriz debe ser simétrica (MA = MA').
+MA = [
+  # u        v       w        p      q       r
+  [3.9112,   0.0,    0.1,     0.0,   0.0,    0.0  ],   # u
+  [0.0,      58.17,  0.0,     0.0,   0.0,    0.0  ],   # v
+  [0.1,      0.0,    48.433,  0.0,   0.0,    0.0  ],   # w
+  [0.0,      0.0,    0.0,     0.5,   0.0,    0.01 ],   # p
+  [0.0,      0.0,    0.0,     0.0,   15.83,  0.0  ],   # q
+  [0.0,      0.0,    0.0,     0.01,  0.0,    15.83],   # r
+]
+# Solo para los bloques C_A (use_ca_omega / use_ca_translational). No viene
+# de Simulink (tu Simulink anula C_A).
+MA_hull = [3.9112, 45.0, 40.0, 0.1, 12.0, 12.0]
+
+
+# -----------------------------------------------------------------------------
+[hidrodinamica]             # fcn_damping.m, fuerzas en el marco del flujo
+# -----------------------------------------------------------------------------
+KD0 = 5.9                   # D  = (KD0 + KD a^2) V^2
+KD = 214.62
+KL0 = 0.0                   # L  = (KL0 + KL a) V^2       (Simulink: 0.326713*0)
+KL = 308.9754               #                              (Simulink: Kalpha)
+KM0 = -0.0328               # T2 = (KM0 + KM a) V^2
+KM = -12.48
+Kbeta = -56.66              # SF = Kbeta b V^2
+KMR_mag = 4.5194            # T1 = KMR sign(a) b V^2
+KMR_o = 0.0                 # solo kmr_mode = "parity"
+KMY_lin = 15.04             # T3 = (KMY_lin b + KMY_cub b^3) V^2
+KMY_cub = -398.442
+
+
+# -----------------------------------------------------------------------------
+[amortiguamiento]           # D_body de fcn_damping.m
+# -----------------------------------------------------------------------------
+Kp_lin = 4.0                # Mx = -(Kp_lin + Kp_quad |p|) p     (0.2*20, 0.2*120)
+Kp_quad = 24.0
+Kq_lin = 10.0               # My = -(Kq_lin + Kq_quad |q|) q     (0.5*20, 0.5*100)
+Kq_quad = 50.0
+Kr_lin = 0.0                # Mz = -(Kr_lin + Kr_quad |r|) r     (100)
+Kr_quad = 100.0
+KpV = 0.0                   # agregado por el port: -KpV V p, etc. (0 = Simulink)
+KqV = 0.0
+KrV = 0.0
+
+
+# -----------------------------------------------------------------------------
+[superficie]                # surface_model = "simulink" (L, H) o "full" (todo)
+# -----------------------------------------------------------------------------
+hull_L = 1.8                # [m] largo del casco   (fcn_buoyancy_surface: L)
+hull_H = 0.2                # [m] alto del casco    (fcn_buoyancy_surface: H)
+B33_rad = 120.0             # [N s/m]  amortiguamiento de radiación heave  ("full")
+B55_rad = 40.0              # [N m s]  amortiguamiento de radiación pitch  ("full")
+dmA_dz = 120.0              # [kg/m]   entrada al agua                     ("full")
+ma_scale_floor = 0.3        # [-] fracción mínima de masa añadida fuera   ("full")
+
+
+# -----------------------------------------------------------------------------
+[crossflow]                 # agregado por el port (use_crossflow)
+# -----------------------------------------------------------------------------
+Cd_cross_y = 200.0          # [kg/m] Y = -Cd v|v|   (estimado por geometría)
+Cd_cross_z = 200.0          # [kg/m] Z = -Cd w|w|
+chi_blend = 0.40            # [rad] incidencia donde entra (~23°)
+chi_width = 0.12            # [rad] ancho de la transición
+
+
+# -----------------------------------------------------------------------------
+[gps]
+# -----------------------------------------------------------------------------
+gps_sigma_m = 0.0           # [m] ruido del fix, 1 sigma. NO SE USA (TODO)
+gps_gate_depth = 0.7        # [m] hay fix solo si z < esto
+
+
+# -----------------------------------------------------------------------------
+[perturbaciones]
+# -----------------------------------------------------------------------------
+disturb_xg = 0.0            # [m] desplazamiento del CG en x (solo r_g: C_RB y
+disturb_yg = 0.0            # [m]   restauración, no M; replicate_disturb_wiring)
+disturb_xlin = 0.0          # [m] posición de la masa móvil (fcn_r_lin: distxlin);
+#                             entra en r_lin, así que afecta M, I_b y r_g
+current_n = [0.0, 0.0, 0.0] # [m/s] corriente en NED (norte, este, abajo)
+
+
+# =============================================================================
+# PERFILES DE MODELO (switches). El escenario elige uno por nombre.
+# Cambiar un switch SÍ recompila (~5-10 s). Detalle: docs/MODELO.md, sección 7.
+# Cada perfil debe listar todos los switches.
+# =============================================================================
+
+[modelo.simulink]           # = tu Simulink (validación de la dinámica)
+kmr_mode = "signum"         # KMR sign(alpha)
+kmy_cubic = true            # término cúbico en T3
+use_alpha_saturation = false
+use_rot_damping = true      # D_body
+surface_model = "simulink"  # fcn_buoyancy_surface (2 puntos)
+use_crossflow = false
+use_geodesy = false         # sin geolocalización
+use_ca_omega = false        # C_A anulado, como en Simulink
+use_ca_translational = false
+replicate_disturb_wiring = true
+
+[modelo.completo]           # con todo lo que agregó el port (misión por waypoints)
+kmr_mode = "signum"
+kmy_cubic = true
+use_alpha_saturation = false
+use_rot_damping = true
+surface_model = "full"      # 9 estaciones + masa añadida + entrada/radiación
+use_crossflow = true
+use_geodesy = true          # posición ECEF (GPS)
+use_ca_omega = false
+use_ca_translational = false
+replicate_disturb_wiring = true

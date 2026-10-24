@@ -1,17 +1,28 @@
 """Glider parameters (JAX pytree) and static model configuration.
 
-CIDESI-UNINDETEC parameter set transcribed from the user's Simulink blocks
-(Mbr+Ma fcn, VBD actuator fcn, damping fcn). rho=1000 (freshwater) per the
-VBD block -- confirm consistency with CFD density.
+All numeric values live in config/cidesi.toml (transcribed from the user's
+Simulink blocks). This module only defines the structure and loads it:
+
+    p, cfg = load_config("config/cidesi.toml", model="simulink", dt=0.05)
+
+rho=1000 (freshwater) per the VBD block -- confirm consistency with CFD
+density.
 """
 from __future__ import annotations
 
 from typing import NamedTuple
 import dataclasses
+import math
+import os
+import tomllib
 import jax.numpy as jnp
 
 G0 = 9.81
 RHO = 1000.0          # per VBD block (freshwater)
+
+DEFAULT_CONFIG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "config", "cidesi.toml")
 
 
 class GliderParams(NamedTuple):
@@ -33,6 +44,7 @@ class GliderParams(NamedTuple):
     I_pist: jnp.ndarray
 
     # ----- VBD geometry (exact port of fcn_VBD_actuator) -------------------
+    m_displaced: jnp.ndarray   # displaced water at neutral: B_neutral = m g
     vbd_area: jnp.ndarray      # piston area
     vbd_max_disp: jnp.ndarray  # half stroke
     vbd_x0: jnp.ndarray        # piston station
@@ -159,78 +171,115 @@ def zoh_tf(num, den, dt, n_states):
             jnp.asarray(np.squeeze(np.asarray(C))))
 
 
-def cidesi_defaults(dt=0.05,
-        # -------- actuator chains: num/den EXACTLY as in the Simulink blocks
-        mass_rate=0.008,                             # [m/s]
-        mass_tf=([400.0], [1.0, 30.0, 400.0]),       # 400/(s^2+30s+400)
-        rot_pre_tf=([1.0], [0.1, 1.0]),              # 1/(0.1s+1) helper;
-        #                                              ([1],[1e-9,1]) ~= OFF
-        rot_rate=0.5,                                # [rad/s]   <-- CONFIRM
-        rot_tf=([400.0], [1.0, 30.0, 400.0]),        # 400/(s^2+30s+400)
-        vbd_pre_tf=([1.0], [0.2, 1.0]),              # 1/(0.2s+1) helper
-        vbd_rate_N=0.5,                              # [N/s]     <-- CONFIRM
-        vbd_tf=([1.0], [2.0, 1.0]),                  # 1/(2s+1)  <-- CONFIRM
-        ) -> GliderParams:
-    mA, mB, mC = zoh_tf(*mass_tf, dt, 2)
-    rpa, rpb, rpc = [jnp.squeeze(v) for v in zoh_tf(*rot_pre_tf, dt, 1)]
-    rA, rB, rC = zoh_tf(*rot_tf, dt, 2)
-    vpa, vpb, vpc = [jnp.squeeze(v) for v in zoh_tf(*vbd_pre_tf, dt, 1)]
-    vA, vB, vC = zoh_tf(*vbd_tf, dt, 2)
-    return GliderParams(
-        m_static=jnp.asarray(37.0),
-        r_static=jnp.array([-0.1241, 0.0, 0.001]),
-        I_static=jnp.diag(jnp.array([0.9, 21.0, 21.0])),
-        m_lin=jnp.asarray(15.0),
-        r_lin0=jnp.array([0.2861, 0.0, 0.001]),
-        I_lin=jnp.diag(jnp.array([0.02, 10.16, 0.17])),
-        dx_lin_max=jnp.asarray(0.10),
-        m_rot=jnp.asarray(5.0),
-        x_rot=jnp.asarray(0.2),
-        R_rot=jnp.asarray(0.07),
-        I_rot=jnp.diag(jnp.array([0.00241296, 0.00207504, 0.00422813])),
-        gamma_max=jnp.asarray(jnp.pi / 2),
-        w_rot_max=jnp.asarray(0.5),  # rotary RATE limiter [rad/s]  # <-- CONFIRM
-        m_pist=jnp.asarray(1.0),
-        I_pist=jnp.diag(jnp.array([4.5521678e-4, 1.245908523e-2, 1.245908523e-2])),
-        vbd_area=jnp.asarray(3.14159265 * 0.04 ** 2),
-        vbd_max_disp=jnp.asarray(0.100),
-        vbd_x0=jnp.asarray(-0.7),
-        vbd_rate=jnp.asarray(0.01),
-        mass_rate=jnp.asarray(mass_rate), mass_A=mA, mass_B=mB, mass_C=mC,
-        rotpre_a=rpa, rotpre_b=rpb, rotpre_c=rpc,
-        rot_rate=jnp.asarray(rot_rate), rot_A=rA, rot_B=rB, rot_C=rC,
-        vbdpre_a=vpa, vbdpre_b=vpb, vbdpre_c=vpc,
-        vbd_rate_N=jnp.asarray(vbd_rate_N), vbd_A=vA, vbd_B=vB, vbd_C=vC,
-        # Simulink MA/IA with port-starboard symmetry: u-w and p-r couplings
-        # kept, u-v, v-w, p-q, q-r set to zero.
-        MA=jnp.array([
-            [3.9112, 0.0,   0.1,    0.0,  0.0,   0.0],
-            [0.0,    58.17, 0.0,    0.0,  0.0,   0.0],
-            [0.1,    0.0,   48.433, 0.0,  0.0,   0.0],
-            [0.0,    0.0,   0.0,    0.5,  0.0,   0.01],
-            [0.0,    0.0,   0.0,    0.0,  15.83, 0.0],
-            [0.0,    0.0,   0.0,    0.01, 0.0,   15.83],
-        ]),
-        MA_hull=jnp.diag(jnp.array([3.9112, 45.0, 40.0, 0.1, 12.0, 12.0])),
-        KD0=jnp.asarray(5.9), KD=jnp.asarray(214.62),
-        KL0=jnp.asarray(0.0), KL=jnp.asarray(308.9754),
-        KM0=jnp.asarray(-0.0328), KM=jnp.asarray(-12.48),
-        Kbeta=jnp.asarray(-56.66),
-        KMR_mag=jnp.asarray(4.5194), KMR_o=jnp.asarray(0.0),
-        KMY_lin=jnp.asarray(15.04), KMY_cub=jnp.asarray(-398.442),
-        Kp_lin=jnp.asarray(4.0), Kq_lin=jnp.asarray(10.0), Kr_lin=jnp.asarray(0.0),
-        Kp_quad=jnp.asarray(24.0), Kq_quad=jnp.asarray(50.0), Kr_quad=jnp.asarray(100.0),
-        KpV=jnp.asarray(0.0), KqV=jnp.asarray(0.0), KrV=jnp.asarray(0.0),
-        hull_L=jnp.asarray(1.8), hull_H=jnp.asarray(0.2),
-        B33_rad=jnp.asarray(120.0), B55_rad=jnp.asarray(40.0),
-        dmA_dz=jnp.asarray(120.0), ma_scale_floor=jnp.asarray(0.3),
-        Cd_cross_y=jnp.asarray(200.0), Cd_cross_z=jnp.asarray(200.0),
-        chi_blend=jnp.asarray(0.40), chi_width=jnp.asarray(0.12),
-        gps_sigma_m=jnp.asarray(0.0), gps_gate_depth=jnp.asarray(0.7),
-        disturb_xg=jnp.asarray(0.0), disturb_yg=jnp.asarray(0.0),
-        disturb_xlin=jnp.asarray(0.0),
-        current_n=jnp.zeros(3),
-    )
+# ----------------------------------------------------------------------------
+# config file loading (config/cidesi.toml)
+# ----------------------------------------------------------------------------
+# keys of the file that are not GliderParams fields: they are converted
+_TF_KEYS = {"mass_tf": 2, "rot_pre_tf": 1, "rot_tf": 2, "vbd_pre_tf": 1,
+            "vbd_tf": 2}                                   # -> n ZOH states
+_DERIVED_KEYS = {"vbd_diam", "vbd_stroke"} | set(_TF_KEYS)
+_DERIVED_FIELDS = {"vbd_area", "vbd_max_disp", "mass_A", "mass_B", "mass_C",
+                   "rotpre_a", "rotpre_b", "rotpre_c", "rot_A", "rot_B",
+                   "rot_C", "vbdpre_a", "vbdpre_b", "vbdpre_c", "vbd_A",
+                   "vbd_B", "vbd_C"}
+_INERTIA_3 = {"I_static", "I_lin", "I_rot", "I_pist"}     # 3 = diag, 3x3
+_INERTIA_6 = {"MA", "MA_hull"}                            # 6 = diag, 6x6
+
+
+def read_config(path=DEFAULT_CONFIG):
+    """Raw TOML -> (flat parameter dict, {profile name: switches dict})."""
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+    models = raw.pop("modelo", {})
+    flat = {}
+    for section, table in raw.items():
+        for k, v in table.items():
+            if k in flat:
+                raise KeyError(f"{path}: '{k}' is repeated ([{section}])")
+            flat[k] = v
+    return flat, models
+
+
+def _check_keys(where, given, expected):
+    missing = sorted(set(expected) - set(given))
+    unknown = sorted(set(given) - set(expected))
+    if missing or unknown:
+        raise KeyError(f"{where}: missing {missing}, unknown {unknown}")
+
+
+def _as_matrix(name, v, n):
+    a = jnp.asarray(v, dtype=float)
+    if a.shape == (n,):
+        return jnp.diag(a)
+    if a.shape == (n, n):
+        if not jnp.allclose(a, a.T):
+            raise ValueError(f"{name} must be symmetric")
+        return a
+    raise ValueError(f"{name}: expected {n} values or {n}x{n}, got {a.shape}")
+
+
+def params_from_dict(d, dt=0.05) -> GliderParams:
+    """Flat dict (file keys) -> GliderParams; TFs discretized with dt."""
+    expected = (set(GliderParams._fields) - _DERIVED_FIELDS) | _DERIVED_KEYS
+    _check_keys("parameters", d, expected)
+    out = {}
+    for k, v in d.items():
+        if k in _DERIVED_KEYS:
+            continue
+        if k in _INERTIA_3:
+            out[k] = _as_matrix(k, v, 3)
+        elif k in _INERTIA_6:
+            out[k] = _as_matrix(k, v, 6)
+        else:
+            out[k] = jnp.asarray(v, dtype=float)
+    out["vbd_area"] = jnp.asarray(math.pi * (d["vbd_diam"] / 2.0) ** 2)
+    out["vbd_max_disp"] = jnp.asarray(d["vbd_stroke"] / 2.0)
+    tfs = {}
+    for k, n in _TF_KEYS.items():
+        tf = d[k]
+        num, den = (tf["num"], tf["den"]) if isinstance(tf, dict) else tf
+        tfs[k] = zoh_tf(num, den, dt, n)
+    out["mass_A"], out["mass_B"], out["mass_C"] = tfs["mass_tf"]
+    out["rotpre_a"], out["rotpre_b"], out["rotpre_c"] = \
+        [jnp.squeeze(v) for v in tfs["rot_pre_tf"]]
+    out["rot_A"], out["rot_B"], out["rot_C"] = tfs["rot_tf"]
+    out["vbdpre_a"], out["vbdpre_b"], out["vbdpre_c"] = \
+        [jnp.squeeze(v) for v in tfs["vbd_pre_tf"]]
+    out["vbd_A"], out["vbd_B"], out["vbd_C"] = tfs["vbd_tf"]
+    return GliderParams(**out)
+
+
+def load_params(path=DEFAULT_CONFIG, dt=0.05, **overrides) -> GliderParams:
+    """Parameters from the config file. overrides use file keys, e.g.
+    load_params(vbd_tf=([1.0], [4.0, 1.0])) or load_params(KM=-13.0)."""
+    d, _ = read_config(path)
+    for k in overrides:
+        if k not in d:
+            raise KeyError(f"unknown parameter '{k}'")
+    d.update(overrides)
+    return params_from_dict(d, dt)
+
+
+def load_model(path=DEFAULT_CONFIG, model="simulink") -> ModelConfig:
+    """Switch profile [modelo.<model>] of the config file."""
+    _, models = read_config(path)
+    if model not in models:
+        raise KeyError(f"{path}: no profile [modelo.{model}]; "
+                       f"available: {sorted(models)}")
+    sw = models[model]
+    _check_keys(f"[modelo.{model}]", sw,
+                [f.name for f in dataclasses.fields(ModelConfig)])
+    return ModelConfig(**sw)
+
+
+def load_config(path=DEFAULT_CONFIG, model="simulink", dt=0.05):
+    """(GliderParams, ModelConfig) from one config file."""
+    return load_params(path, dt), load_model(path, model)
+
+
+def cidesi_defaults(dt=0.05, **overrides) -> GliderParams:
+    """Parameters of config/cidesi.toml (kept for the v1 scripts)."""
+    return load_params(DEFAULT_CONFIG, dt, **overrides)
 
 
 # backward-compat alias used by demos

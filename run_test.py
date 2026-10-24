@@ -18,19 +18,19 @@ from gliderjax.params import cidesi_defaults
 # =============================================================================
 # 1) PARAMETERS  (the physics numbers: masses, coefficients, limits)
 # =============================================================================
-p = cidesi_defaults()
+p = cidesi_defaults()          # values from config/cidesi.toml (edit there)
 
-# To change ANY parameter for a test, DO NOT edit params.py -- override here.
+# To change a parameter only for this test, override here.
 # GliderParams is immutable; ._replace() returns a modified copy. Examples:
 #
 # p = p._replace(disturb_xg=0.01)                  # 1 cm CG disturbance (your
 #                                               #   parametric perturbation)
 # p = p._replace(current_n=jnp.array([0.1, -0.05, 0.0]))   # NED current [m/s]
 # p = p._replace(KM=p.KM * 1.10)                # +10% pitch stiffness
-# p = p._replace(vbd_rate=0.005)                # slower piston slew
 #
-# Full field list: open gliderjax/params.py -- every NamedTuple field can be
-# overridden this way, and this is also how Monte Carlo batching perturbs them.
+# Full field list: config/cidesi.toml / gliderjax/params.py -- every
+# NamedTuple field can be overridden this way, and this is also how Monte
+# Carlo batching perturbs them.
 
 # =============================================================================
 # 2) MODEL CONFIGURATION  (structural switches -- change WHICH model runs)
@@ -124,8 +124,8 @@ x0 = initial_state(depth=0.0, pitch=-0.2, roll=0.0, u=0.2)
 #   [12] m_rl     [13:15] mass TF states     rc    = mass_C @ x[13:15]
 #   [15] g_pre    [16] g_rl     [17:19] rotary TF      gamma = rot_C @ x[17:19]
 #   [19] v_pre    [20] v_rl     [21:23] VBD TF         dB_f  = vbd_C @ x[21:23]
-# Actuator SPEEDS are set in cidesi_defaults(...) as continuous num/den,
-# e.g. cidesi_defaults(vbd_tf=([1.0],[4.0,1.0]))  ->  VBD becomes 1/(4s+1).
+# Actuator SPEEDS are set in config/cidesi.toml as continuous num/den, or
+# here: cidesi_defaults(vbd_tf=([1.0],[4.0,1.0]))  ->  VBD becomes 1/(4s+1).
 # Pre-setting an actuator: easiest is to run the sim a few frames with the
 # desired constant command, or set the TF states so C@x equals the value
 # (for the canonical 2-state form set x[14]=value/mass_C[1] etc. -- or just

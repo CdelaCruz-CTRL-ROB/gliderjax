@@ -27,7 +27,7 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 **No son tus bloques `Pitch_control`, `Yaw_control` ni `Roll control` de
 Simulink.** La sesión anterior los puso para que la misión pudiera volar
 mientras llegaban los tuyos. Ganancias: constantes al inicio de
-`autopilot.py` (líneas 31-35).
+`autopilot.py` (líneas 32-37).
 
 **Pitch: PID** (`KP_P = 0.015`, `KD_P = 0.08`, `KI_P = 0.003`)
 
@@ -130,3 +130,10 @@ SURF 922 s → FIX 932 s → … → DONE 1854 s.
 6. **Peculiaridad de V2:** en el tick en que se acaban los waypoints, la
    salida de FIX es `[0, yaw, 0, 0, 0]` en lugar de la normal (el port dice
    que es así en V2).
+7. **Pitch de cada inmersión.** Hoy es fijo para toda la misión
+   (`PITCH_DN`, `PITCH_UP` = ∓35°). Tu `fcn_VBD_actuator` tenía además un
+   pitch automático `p_ref = ±con` según el signo de dB, que el port no
+   tiene. **Decisión (autor, 2026-10-24):** quitar el pitch automático del
+   actuador y dar siempre el pitch explícitamente para cada inmersión.
+   Pendiente para el script de waypoints: pitch de bajada y de subida por
+   inmersión (o por waypoint) como dato de la misión.

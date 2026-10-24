@@ -65,8 +65,7 @@ def R_flow_to_body(alpha, beta):
 # ----------------------------------------------------------------------------
 def vbd_outputs(p: GliderParams, dxv):
     dV = -dxv * p.vbd_area
-    W = (p.m_static + p.m_lin + p.m_rot + p.m_pist) * G0
-    B_neutral = W
+    B_neutral = p.m_displaced * G0        # Simulink: W_total = 58*9.81
     B = B_neutral + dV * RHO * G0
     r_p = jnp.array([p.vbd_x0 + dxv, 0.0, 0.0])
     x_centroid = p.vbd_x0 + dxv / 2.0

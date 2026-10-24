@@ -8,61 +8,62 @@
 "Según el port" = lo dicen los comentarios que dejó la sesión anterior, aún
 no comparado contra tu código.
 
+**Todos los valores numéricos** están en
+[`config/cidesi.toml`](../config/cidesi.toml), con unidades y origen de
+cada uno. Los switches están en el mismo archivo, como perfiles
+(`[modelo.simulink]`, `[modelo.completo]`).
+
 | Componente | Origen | Dónde | Cómo se activa |
 |---|---|---|---|
 | Modelo hidrodinámico en marco del flujo (D, SF, L, T1, T2, T3) | Simulink, **verificado** (sección 2.1) | `dynamics.py::tau_flowframe` | siempre |
 | KMR · sign(α) (momento de roll) | Simulink, **verificado** | `tau_flowframe` | `kmr_mode="signum"` (default) |
 | Amortiguamiento rotacional D_body | Simulink, **verificado** | `dynamics.py::tau_rot_damping` | `use_rot_damping=True` (default) |
-| Presupuesto de 4 masas, M_RB, I_b, r_g | Simulink (Mbr+Ma fcn), **verificado** (sección 2.2), salvo la rotación de la inercia de la masa rotatoria | `dynamics.py::mass_geometry, M_rigid` | `rot_inertia_mode` (default `"RIRt"`; Simulink = `"RtIR"`) |
+| Presupuesto de 4 masas, M_RB, I_b, r_g | Simulink (Mbr+Ma fcn, fcn_r_lin), **verificado** (secciones 2.2 y 2.5); inercia de la masa rotatoria **corregida** | `dynamics.py::mass_geometry, M_rigid` | siempre |
 | C_RB (Coriolis de cuerpo rígido) | Simulink (calculate_coriolis_total_fossen), **verificado** (sección 2.3) | `dynamics.py::C_rigid` | siempre |
-| Masa añadida MA | Simulink, **verificado**: tu código tiene términos fuera de la diagonal (0.1 kg, 0.01 kg·m²); la librería usa solo la diagonal por defecto | `params.py` (`MA` diagonal, `MA_SIMULINK` completa) | `p._replace(MA=MA_SIMULINK)` |
-| VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), según el port | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
-| Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados `CONFIRM`** | `params.py::cidesi_defaults`, `sim.py::move_actuators` | siempre |
+| Masa añadida MA | Simulink, **verificado**, con simetría babor–estribor impuesta (sección 2.2) | `config/cidesi.toml`, `[masa_anadida]` | siempre |
+| VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), **verificado** (sección 2.4) | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
+| Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados CONFIRMAR** | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Reporte, g(η), según el port | `dynamics.py::tau_restoring` | siempre |
-| Cableado de la perturbación dist_xg/dist_yg | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_dist_wiring=True` |
+| Perturbación de CG (disturb_xg, disturb_yg) | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_disturb_wiring=True` |
+| Perturbación de la masa móvil (disturb_xlin) | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
+| Superficie de 2 puntos (B_scale, Δx_b) | Simulink (fcn_buoyancy_surface), **verificado** (sección 2.6) | `dynamics.py::surface_two_point` | `surface_model="simulink"` |
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
-| **Modelo de superficie** | **Agregado por el port** | `dynamics.py::surface_state, tau_surface` | `use_surface_model=True` (default) |
+| **Superficie completa** (9 estaciones, masa añadida, entrada y radiación) | **Agregado por el port** | `dynamics.py::surface_state, tau_surface` | `surface_model="full"` (default) |
 | **Geodesia** (posición ECEF verdadera) | **Agregado por el port** | `dynamics.py`, `geodesy.py` | `use_geodesy=True` (default) |
 | Bloques C_A (Coriolis de masa añadida) | Tu Simulink lo calcula pero lo anula (`C_RB + C_A*0`), **verificado**. El port lo puede encender, pero con otra matriz (`MA_hull`) | `dynamics.py::C_added` | `use_ca_omega`, `use_ca_translational` (default False = Simulink) |
 | Amortiguamiento ∝ V (KpV, KqV, KrV) | Agregado, valores en 0 | `tau_rot_damping` | siempre, sin efecto |
 
 ### Importante para validar contra Simulink
 
-Con `ModelConfig()` por defecto, superficie, crossflow y geodesia están
-**encendidos**, así que **no** es el modelo de Simulink. Para reproducir
-Simulink:
+Usar el perfil `simulink` del archivo de configuración:
 
 ```python
-from gliderjax.params import cidesi_defaults, MA_SIMULINK
-p = cidesi_defaults()._replace(MA=MA_SIMULINK)
-cfg = ModelConfig(use_surface_model=False, use_crossflow=False,
-                  use_geodesy=False, rot_inertia_mode="RtIR")
+from gliderjax.params import load_config
+p, cfg = load_config("config/cidesi.toml", model="simulink", dt=0.05)
 ```
 
-(`use_alpha_saturation` ya es `False` por defecto.) El script
-`escenarios/01_validacion_dinamica.py` escribe todos los switches
-explícitamente; ver [VALIDACION.md](VALIDACION.md).
+Así lo hace `escenarios/01_validacion_dinamica.py`; ver
+[VALIDACION.md](VALIDACION.md). `ModelConfig()` sin argumentos **no** es el
+modelo de Simulink: trae superficie completa, crossflow y geodesia
+encendidos (es el perfil `completo`).
 
 Verificado bit a bit (2026-10-24): con la saturación encendida y los otros
 tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 
-### Diferencias conocidas con Simulink
+### Diferencias con Simulink que se dejan a propósito
 
-1. **Inercia de la masa rotatoria** y **términos fuera de la diagonal de
-   MA**: ver sección 2.2. Las dos tienen opción para replicar Simulink y su
-   efecto es despreciable.
-2. **Flotación en superficie** (según comentarios del port, **no
-   verificada**). El comentario de `surface_state` dice que reemplaza una
-   `fcn_buoyancy_surface` "de dos puntos" de tu Simulink. En la
-   configuración equivalente a Simulink (superficie apagada) esa función no
-   está representada, así que las pruebas deben quedarse lejos de z = 0.
-3. **Entradas que vienen de otros bloques** (no verificadas): la posición
-   de la masa móvil `r_lin = [0.2861 + rc, 0, 0.001]` y la del pistón
-   `r_p = [−0.7 + Δx, 0, 0]` (de `fcn_VBD_actuator`).
+1. **Inercia de la masa rotatoria**: el port usa `R·I·Rᵀ`, la consistente
+   con la posición de la masa; tu Simulink tiene `Rᵀ·I·R` (error). Decisión
+   del autor, 2026-10-24: no replicar el error. Sección 2.2.
+2. **Masa añadida**: se impuso simetría babor–estribor a tus valores.
+   Sección 2.2.
+3. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
+   no se porta. El pitch de cada inmersión lo da la misión. Sección 2.4.
 
-Para cerrarlas: comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface`
-y el bloque que arma `r_lin`.
+Falta verificar: el bloque que arma el vector de restauración (el port
+supone `r_b = [x_b + Δx_b, 0, 0]` y `B·B_scale`) y las cadenas de
+actuadores (valores CONFIRMAR).
 
 ## 2. Comparación con tus funciones de Simulink
 
@@ -101,19 +102,19 @@ Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
 | r_s | [−0.1241, 0, 0.001] | `r_static` | sí |
 | r_rot | [0.2, R·cos(γ+π/2), R·sin(γ+π/2)], R = 0.07 | [0.2, −R·sin γ, R·cos γ] | sí (misma expresión) |
 | I_s, I_lin, I_rot, I_p | diagonales de tu código | mismos valores | sí |
-| Inercia de la masa rotatoria en cuerpo | `Rot_xᵀ·I_rot·Rot_x` | `Rx·I_rot·Rxᵀ` (default) | **no**, ver abajo |
+| Inercia de la masa rotatoria en cuerpo | `Rot_xᵀ·I_rot·Rot_x` | `Rx·I_rot·Rxᵀ` | **no, a propósito**: ver abajo |
 | M_RB | `[m·I, −Σ mᵢ s(rᵢ); Σ mᵢ s(rᵢ), I_b]` | `M_rigid(m, r_g, I_b)`, con `m·s(r_g) = Σ mᵢ s(rᵢ)` | sí |
 | I_b | `Σ (Iᵢ − mᵢ s(rᵢ)²)` | `Σ about_CO(Iᵢ, mᵢ, rᵢ)` | sí |
-| r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `r_g_dist` | sí |
-| dist en M e I_b | no entra (M se arma con posiciones sin perturbar) | `replicate_dist_wiring=True` | sí |
-| MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) fuera de la diagonal | solo diagonal | **no**, ver abajo |
+| r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `r_g_dist` (con `disturb_xg`, `disturb_yg`) | sí |
+| dist en M e I_b | no entra (M se arma con posiciones sin perturbar) | `replicate_disturb_wiring=True` | sí |
+| MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) en todos los acoplamientos | mismos valores, solo en u–w y p–r | **no, a propósito**: ver abajo |
 | CA (acoplamiento traslación–rotación de M_A) | 0 (`2.57*0`) | 0 | sí |
 | M = M_RB + M_A | sí | sí | sí |
 
 **Diferencia 1: rotación del tensor de la masa rotatoria.**
 
 - Tu posición `r_rot = Rot_x·[0.2, 0, R]`, así que la masa gira con
-  `Rot_x`. Para ser consistente, su tensor debería girar igual:
+  `Rot_x`. Para ser consistente, su tensor debe girar igual:
   `Rot_x·I·Rot_xᵀ`. Tu código usa `Rot_xᵀ·I·Rot_x`, que equivale a girar
   el tensor −γ.
 - Como I_rot es diagonal, las dos formas dan **la misma diagonal**. Solo
@@ -122,32 +123,42 @@ Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
 - En el I_b total, el término yz vale 0.0112 (port) contra 0.0133
   (Simulink) a γ = 45°. La diferencia máxima es 0.0022 kg·m², frente a
   I_yy ≈ 30 kg·m².
-- Switch: `rot_inertia_mode="RtIR"` replica tu código; el default
-  `"RIRt"` es el consistente con `r_rot`.
+- **Decisión (autor, 2026-10-24):** usar la correcta, `R·I·Rᵀ`, sin opción
+  para replicar el error.
 
-**Diferencia 2: términos fuera de la diagonal de la masa añadida.**
+**Diferencia 2: simetría de la masa añadida.**
 
-- Tu código: 0.1 kg en MA (acoplan u–v, u–w, v–w) y 0.01 kg·m² en IA
-  (acoplan p–q, p–r, q–r). Tienes comentada la versión diagonal.
-- El port los puso en cero ("leftovers removed", según su comentario). Por
-  simetría babor–estribor, los acoplamientos u–v, v–w, p–q y q–r deberían
-  ser cero; u–w y p–r podrían no serlo.
-- Opción: `p._replace(MA=MA_SIMULINK)` (constante en `params.py`).
-- **Pregunta abierta:** ¿qué representan esos 0.1 y 0.01? ¿Valores
-  medidos, de CFD o un relleno?
+Dos ideas distintas:
 
-**Efecto medido** (escenario de validación, 1200 s, contra el port por
-defecto):
+- **La matriz siempre es simétrica** (M_A = M_Aᵀ), sea cual sea la
+  geometría. Sale de la energía cinética del fluido (flujo potencial). Tu
+  matriz ya lo era. El cargador del archivo de configuración rechaza una MA
+  no simétrica.
+- **La simetría de la geometría pone ceros.** Si el casco es simétrico
+  babor–estribor (plano xz), los movimientos "longitudinales" (u, w, q) no
+  se acoplan con los "laterales" (v, p, r): los términos u–v, v–w, p–q y q–r
+  son **exactamente cero**. Con pequeñas diferencias de fabricación serían
+  pequeños pero no cero; normalmente se desprecian porque no se pueden
+  estimar con precisión.
+- u–w y p–r **sí** pueden existir: el casco no es simétrico arriba–abajo
+  (aleta vertical, antena).
+
+**Decisión (autor, 2026-10-24):** simetría babor–estribor. Se conservan
+tus 0.1 (u–w) y 0.01 (p–r); u–v, v–w, p–q y q–r en cero. Si esos 0.1 y
+0.01 eran relleno, basta ponerlos en 0 en `config/cidesi.toml`.
+
+**Efecto medido** (escenario de validación, 1200 s, contra MA diagonal):
 
 | Variante | Posición horizontal | Profundidad | Roll | Pitch | Yaw |
 |---|---|---|---|---|---|
-| `RtIR`, MA diagonal | 0.0003 m | < 0.0001 m | 0.0006° | 0.0009° | 0.0009° |
-| `RIRt`, `MA_SIMULINK` | 0.38 m | 0.0007 m | 0.008° | 0.005° | 0.13° |
-| las dos (= Simulink) | 0.38 m | 0.0007 m | 0.008° | 0.006° | 0.13° |
+| inercia `Rᵀ·I·R` de Simulink | 0.0003 m | < 0.0001 m | 0.0006° | 0.0009° | 0.0009° |
+| MA simétrica (la adoptada) | 0.012 m | 0.001 m | 0.004° | 0.001° | 0.010° |
+| MA de Simulink completa | 0.38 m | 0.0007 m | 0.008° | 0.005° | 0.13° |
 
 Los valores cuasi-estacionarios por fase no cambian en ningún decimal
 mostrado: con ν̇ = 0, la matriz de masa no influye. Las diferencias vienen
-de los transitorios.
+de los transitorios. Lo que más pesa son los acoplamientos u–v y v–w que la
+simetría elimina.
 
 ### 2.3 Coriolis: `calculate_coriolis_total_fossen`
 
@@ -169,6 +180,88 @@ lo incluye en KM, así que encenderlo lo contaría dos veces.
 
 No verificado: qué velocidad entra a esta función en tu diagrama (ν o
 ν_r). Sin corriente son iguales, y la validación corre sin corriente.
+
+### 2.4 VBD: `fcn_VBD_actuator`
+
+Referencia: [referencia_simulink/fcn_VBD_actuator.m](referencia_simulink/fcn_VBD_actuator.m)
+(revisado 2026-10-24)
+
+| Parte | Simulink | Port (`vbd_outputs`, `dxv_from_dB_ref`) | ¿Igual? |
+|---|---|---|---|
+| ρ, g | 1000, 9.81 | `RHO`, `G0` | sí |
+| B_neutral | `W_total = 58*9.81` (constante) | `m_displaced·g`, `m_displaced = 58` | sí (antes el port usaba la suma de las masas: igual con los valores actuales, pero se movía si cambiabas una masa) |
+| Área | `pi*(0.08/2)^2` | `pi*(vbd_diam/2)^2` | sí (antes `3.14159265*0.04^2`, diferencia relativa 1e-9) |
+| Δx pedido y saturación | `−(dB/(ρg))/área`, ±carrera/2 | igual | sí |
+| r_p | `[x0 + Δx, 0, 0]`, x0 = −0.7 | igual | sí |
+| B_total | `B_neutral + ΔV·ρ·g`, ΔV = −Δx·área | igual | sí |
+| x_b | `ΔB·(x0 + Δx/2)/B_total` (rb_neutral = 0) | igual | sí |
+| `percent_fill`, `delta_V_actual` | salidas de monitoreo | no se calculan | no afecta la dinámica |
+| `p_ref` | ±`con` según el signo de dB | **no se porta** | a propósito, ver abajo |
+
+**p_ref (pitch automático según el signo de dB).** Tu bloque daba un pitch
+de referencia ±`con` al bajar o subir, y el control de pitch tenía un switch
+para ignorarlo. El port no lo tiene: en la misión, el pitch de referencia
+lo da la FSM (`PITCH_DN`, `PITCH_UP`). **Decisión (autor, 2026-10-24):**
+el actuador no decide la guiada; el pitch se da explícitamente para cada
+inmersión. Pendiente para el script de waypoints: pitch por inmersión como
+parámetro de la misión.
+
+Supuesto del port, sin verificar: `fcn_VBD_actuator` recibe dB **después**
+de la dinámica del actuador (prefiltro, limitador, `1/(2s+1)`), así que el
+pistón sigue a la flotabilidad filtrada. Ver los valores CONFIRMAR de
+`[actuadores]`.
+
+### 2.5 Posición de la masa móvil: `fcn_r_lin`
+
+Referencia: [referencia_simulink/fcn_r_lin.m](referencia_simulink/fcn_r_lin.m)
+(revisado 2026-10-24)
+
+| Simulink | Port (`mass_geometry`) | ¿Igual? |
+|---|---|---|
+| `r_lin = [0.2861 + r_c + distxlin, 0, 0.001]` | `r_lin0 + [rc + disturb_xlin, 0, 0]`, `r_lin0 = [0.2861, 0, 0.001]` | sí (desde 2026-10-24; antes faltaba la perturbación) |
+
+`distxlin` se llama `disturb_xlin` en el port (para no confundir "dist"
+con distancia; por lo mismo, `dist_xg`, `dist_yg` → `disturb_xg`,
+`disturb_yg`). A diferencia de `disturb_xg`, esta perturbación sí entra en
+M, I_b y r_g, porque cambia la posición de una masa real.
+
+Ejemplo de su efecto: `disturb_xlin = 5 mm` en la prueba de validación lleva
+el pitch de bajada de −38.5° a −44.5° y el de subida de +36.6° a +29.1°.
+
+### 2.6 Superficie: `fcn_buoyancy_surface`
+
+Referencia: [referencia_simulink/fcn_buoyancy_surface.m](referencia_simulink/fcn_buoyancy_surface.m)
+(revisado 2026-10-24)
+
+Port exacto en `dynamics.py::surface_two_point`, con
+`surface_model="simulink"`:
+
+- Emersión de la parte superior del casco solo en nariz y cola, sin roll:
+  `z_tope = z ∓ (L/2)·sin θ − (H/2)·cos θ`, fracción emergida
+  `clip(−z_tope/H, 0, 1)`.
+- `B_scale = 1 − promedio`, `Δx_b = −(L/2)·(e_nariz − e_cola)/(e_nariz + e_cola)·promedio`.
+- Conexión: `B = B_total·B_scale` y `x_b = x_b(VBD) + Δx_b`, antes del
+  vector de restauración. **Supuesto:** que `B_scale` multiplica a B (el
+  autor escribió "las sumo a x_b y a B"; para `B_scale`, que va de 0 a 1,
+  tiene sentido multiplicar). Por confirmar.
+- `L = hull_L = 1.8`, `H = hull_H = 0.2` (`[superficie]` del archivo de
+  configuración).
+
+Lejos de la superficie no hace nada: verificado, la prueba de validación da
+exactamente lo mismo con `"simulink"` que con `"none"`.
+
+**Comparación con la superficie completa del port** (`"full"`): subida
+desde 20 m con dB = +3 N hasta quedar flotando. Promedio de los últimos
+50 s:
+
+| Modelo | Llega a z < 0.5 m | z flotando | pitch | B_scale |
+|---|---|---|---|---|
+| `simulink` (2 puntos) | 66 s | +0.131 m | +2.1° | 0.995 |
+| `full` (9 estaciones, roll, masa añadida, radiación) | 65 s | +0.137 m | +3.2° | 0.995 |
+
+Los dos flotan con el 0.5 % del volumen fuera, que equivale a los +3 N de
+flotabilidad (0.5 % de 569 N). La diferencia está en el transitorio de
+llegada y el pitch final.
 
 ## 3. Saturación tanh de α y β
 
@@ -245,18 +338,29 @@ peso = ½·(1 + tanh((χ − chi_blend) / chi_width)),   χ = acos(|u|/V)
 
 ## 5. Modelo de superficie
 
-Solo en la versión con waypoints. `dynamics.py::surface_state, tau_surface`.
+Switch `surface_model` (desde 2026-10-24):
 
-- Calcula qué fracción del casco está fuera del agua (9 puntos a lo largo).
+| Valor | Qué es |
+|---|---|
+| `"none"` | sin superficie: cerca de z = 0 no es físico (con flotabilidad positiva sube hacia z negativo) |
+| `"simulink"` | tu `fcn_buoyancy_surface` de 2 puntos (sección 2.6). Perfil `simulink` |
+| `"full"` | modelo del port, descrito abajo. Perfil `completo` y default de `ModelConfig()` |
+
+Modelo completo del port (`dynamics.py::surface_state, tau_surface`):
+
+- Calcula qué fracción del casco está fuera del agua (9 puntos a lo largo,
+  con pitch y roll).
 - Escala la flotabilidad por la fracción sumergida y mueve el centro de
   flotación al centroide sumergido.
 - Reduce la masa añadida al emerger (mínimo `ma_scale_floor = 0.3`).
 - Agrega cerca de la superficie: fuerza de entrada al agua y amortiguamiento
   de radiación en heave y pitch.
 
-**Efecto principal:** con flotabilidad positiva el planeador sube hasta
-quedar parcialmente fuera y se queda flotando (en la misión, ~0.1 m en
-FIX). Sin este modelo (v1 NO_WP) subiría indefinidamente hacia z negativo.
+**Efecto principal** (cualquiera de los dos modelos): con flotabilidad
+positiva el planeador sube hasta quedar parcialmente fuera y se queda
+flotando (en la misión, ~0.1 m en FIX). Sin modelo de superficie (v1 NO_WP)
+subiría indefinidamente hacia z negativo. Comparación entre los dos en la
+sección 2.6.
 
 Parámetros **estimados**, no medidos: `hull_L = 1.8`, `hull_H = 0.2`,
 `B33_rad = 120`, `B55_rad = 40`, `dmA_dz = 120`. Se pueden identificar con
@@ -297,20 +401,23 @@ NED: yaw rate negativo = gira a la izquierda.
 - Vale la pena revisar si el sign(α) era necesario en Simulink o si
   compensaba otra cosa.
 
-## 7. Switches del modelo (`ModelConfig` en `params.py`)
+## 7. Switches del modelo
 
+Se eligen como perfil en `config/cidesi.toml` (`[modelo.simulink]`,
+`[modelo.completo]`; se pueden agregar otros). Cada perfil debe listar
+todos los switches. La clase es `ModelConfig` en `params.py`; sus defaults
+equivalen al perfil `completo` y solo los usan los scripts de v1.
 Cambiar cualquiera obliga a recompilar (~5–10 s).
 
-| Switch | Default | Modelo Simulink | Qué hace |
+| Switch | Perfil `simulink` | Perfil `completo` | Qué hace |
 |---|---|---|---|
 | `kmr_mode` | `"signum"` | `"signum"` | `"signum"` = KMR·sign(α); `"parity"` = variante suave; `"const"` = sin dependencia de α |
-| `kmy_cubic` | True | True | término cúbico en el momento de yaw |
-| `use_alpha_saturation` | False | False | sección 3 |
-| `rot_inertia_mode` | `"RIRt"` | **`"RtIR"`** | rotación del tensor de la masa rotatoria, sección 2.2 |
-| `use_rot_damping` | True | True | D_body |
-| `use_surface_model` | True | **False** | sección 5 |
-| `use_crossflow` | True | **False** | sección 4 |
-| `use_geodesy` | True | **False** | posición ECEF (necesaria para la misión con GPS) |
-| `use_ca_omega` | False | False | Coriolis de masa añadida (rotacional) |
-| `use_ca_translational` | False | False | bloque de Munk: **duplica** física ya incluida en el CFD |
-| `replicate_dist_wiring` | True | True | la perturbación de CG entra en restauración y C_RB pero no en M_RB, como en Simulink |
+| `kmy_cubic` | true | true | término cúbico en el momento de yaw |
+| `use_alpha_saturation` | false | false | sección 3 |
+| `use_rot_damping` | true | true | D_body |
+| `surface_model` | `"simulink"` | `"full"` | sección 5 |
+| `use_crossflow` | false | true | sección 4 |
+| `use_geodesy` | false | true | posición ECEF (necesaria para la misión con GPS) |
+| `use_ca_omega` | false | false | Coriolis de masa añadida (rotacional) |
+| `use_ca_translational` | false | false | bloque de Munk: **duplica** física ya incluida en el CFD |
+| `replicate_disturb_wiring` | true | true | la perturbación de CG (`disturb_xg`, `disturb_yg`) entra en restauración y C_RB pero no en M_RB, como en Simulink |

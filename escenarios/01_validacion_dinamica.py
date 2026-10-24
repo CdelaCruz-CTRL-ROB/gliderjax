@@ -1,8 +1,9 @@
 """01_validacion_dinamica.py -- validación de la dinámica en LAZO ABIERTO.
 
-Modelo equivalente a tu Simulink: sin superficie, sin crossflow, sin
-geolocalización y sin saturación de alpha. Los actuadores siguen una tabla
-de fases con comandos constantes por tramos (como un Signal Builder).
+Modelo equivalente a tu Simulink (perfil "simulink" de config/cidesi.toml):
+superficie de 2 puntos, sin crossflow, sin geolocalización y sin saturación
+de alpha. Los actuadores siguen una tabla de fases con comandos constantes
+por tramos (como un Signal Builder).
 
 Correr desde GLIDER_JAX\\sim\\gliderjax:
 
@@ -12,6 +13,7 @@ Resultados en out/01_validacion_dinamica/: figuras PNG + telemetria.npz.
 Documentación: docs/VALIDACION.md
 """
 import os
+import shutil
 import sys
 import time
 
@@ -20,39 +22,24 @@ sys.path.insert(0, RAIZ)          # para importar la librería gliderjax
 
 import numpy as np
 import matplotlib.pyplot as plt
-from gliderjax import ModelConfig, make_simulator, initial_state, scope
-from gliderjax.params import cidesi_defaults
+from gliderjax import make_simulator, initial_state, scope
+from gliderjax.params import load_config
 from gliderjax.autopilot import make_open_loop_controller
 
 # =============================================================================
-# 1) PARÁMETROS FÍSICOS (masas, coeficientes, límites)
+# 1) CONFIGURACIÓN DEL MODELO
+#    Todos los parámetros (masas, inercias, masa añadida, coeficientes,
+#    actuadores, perturbaciones) y los perfiles de switches están en el
+#    archivo de configuración: editar ahí, no aquí.
 # =============================================================================
-p = cidesi_defaults()
-
-# Para cambiar un parámetro SIN editar params.py (devuelve una copia):
-# p = p._replace(KM=p.KM * 1.10)        # +10 % rigidez de pitch
-# p = p._replace(disturb_xg=0.01)          # perturbación de CG de 1 cm
-# Lista completa de campos: gliderjax/params.py (GliderParams).
-
-# =============================================================================
-# 2) MODELO -- todos los switches explícitos (este conjunto = tu Simulink)
-#    Cambiar cualquiera recompila (~5-10 s). Ver docs/MODELO.md, sección 7.
-# =============================================================================
-cfg = ModelConfig(
-    kmr_mode="signum",            # KMR*sign(alpha), como en Simulink
-    kmy_cubic=True,               # T3 = (KMYLIN*beta + KMYCUB*beta^3) V^2
-    use_rot_damping=True,         # D_body
-    use_alpha_saturation=False,   # NO está en Simulink
-    surface_model="simulink",     # tu fcn_buoyancy_surface (2 puntos)
-    use_crossflow=False,          # agregado por el port
-    use_geodesy=False,            # sin geolocalización
-    use_ca_omega=False,           # Coriolis de masa añadida: apagado
-    use_ca_translational=False,   #   (Simulink anula C_A)
-    replicate_disturb_wiring=True,  # perturbación de CG cableada como Simulink
-)
+CONFIG = os.path.join(RAIZ, "config", "cidesi.toml")
+MODELO = "simulink"   # perfil [modelo.<nombre>] del archivo:
+#                       "simulink" = tu Simulink, "completo" = con todo lo del port
+DT = 0.05             # paso RK4 [s] (también discretiza las FT de actuadores)
+DECIMATE = 4          # pasos por muestra guardada: 4 -> cada 0.2 s
 
 # =============================================================================
-# 3) COMANDOS EN LAZO ABIERTO -- tabla de fases
+# 2) COMANDOS EN LAZO ABIERTO -- tabla de fases
 #    Desde t_inicio, los comandos se mantienen hasta la siguiente fila.
 #      rc    [m]    masa móvil (+ = adelante -> nariz abajo; satura en +-0.10)
 #      gamma [deg]  masa rotatoria (+ = roll a la izquierda)
@@ -68,21 +55,14 @@ FASES = [
 T_FINAL = 1200.0                  # [s]
 
 # =============================================================================
-# 4) CONDICIONES INICIALES (actuadores en neutro)
-#    Sin modelo de superficie: mantener el planeador lejos de z = 0.
+# 3) CONDICIONES INICIALES (actuadores en neutro)
 # =============================================================================
 x0 = initial_state(depth=30.0, pitch=-0.2, u=0.2, roll=0.0)
 # Cualquier otro estado: x0 = x0.at[INDICE].set(VALOR)
 #   [0:3] x, y, z   [3:6] phi, theta, psi [rad]   [6:12] u v w p q r
 
 # =============================================================================
-# 5) AJUSTES DEL SIMULADOR
-# =============================================================================
-DT = 0.05             # paso RK4 [s]
-DECIMATE = 4          # pasos por muestra guardada: 4 -> cada 0.2 s
-
-# =============================================================================
-# 6) COMPARACIÓN CON SIMULINK (opcional)
+# 4) COMPARACIÓN CON SIMULINK (opcional)
 #    CSV con columnas [t, x, y, z, phi, theta, psi, u, v, w, p, q, r],
 #    misma tabla de comandos y mismas condiciones iniciales.
 #    Ver validation/compare_simulink.py. None = sin comparación.
@@ -92,10 +72,15 @@ SIMULINK_CSV = None   # ej.: os.path.join(RAIZ, "validation", "lazo_abierto.csv"
 MOSTRAR = True        # True: abre las figuras al final (zoom, pan)
 
 # =============================================================================
-# 7) CORRER
+# 5) CORRER
 # =============================================================================
 NOMBRE = "01_validacion_dinamica"
 OUT = os.path.join(RAIZ, "out", NOMBRE)
+
+p, cfg = load_config(CONFIG, MODELO, dt=DT)
+print(f"configuración: {os.path.relpath(CONFIG, RAIZ)}, modelo '{MODELO}'")
+os.makedirs(OUT, exist_ok=True)
+shutil.copy(CONFIG, os.path.join(OUT, "config_usada.toml"))  # registro
 
 cs0, ctrl = make_open_loop_controller(
     [(t0, rc, np.deg2rad(gm), dB) for t0, rc, gm, dB, _ in FASES])
@@ -113,7 +98,7 @@ scope.save_tel(tel, os.path.join(OUT, "telemetria.npz"))
 if np.isnan(tel["eta"]).any():
     print("ATENCIÓN: la simulación tiene NaN")
 z_min = tel["eta"][:, 2].min()
-if z_min < 2.0:
+if z_min < 2.0 and cfg.surface_model == "none":
     print(f"ATENCIÓN: llegó a {z_min:.1f} m de profundidad. Sin modelo de "
           f"superficie, cerca de z = 0 los resultados no son físicos.")
 
@@ -123,7 +108,7 @@ print()
 scope.phase_summary(tel, fases, t_end=T_FINAL)
 
 # =============================================================================
-# 8) GRÁFICAS
+# 6) GRÁFICAS
 # =============================================================================
 scope.KEEP_OPEN = MOSTRAR
 fig = lambda nombre: os.path.join(OUT, nombre)
