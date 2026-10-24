@@ -21,13 +21,16 @@ sys.path.insert(0, RAIZ)          # para importar la librería gliderjax
 import numpy as np
 import matplotlib.pyplot as plt
 from gliderjax import ModelConfig, make_simulator, initial_state, scope
-from gliderjax.params import cidesi_defaults
+from gliderjax.params import cidesi_defaults, MA_SIMULINK
 from gliderjax.autopilot import make_open_loop_controller
 
 # =============================================================================
 # 1) PARÁMETROS FÍSICOS (masas, coeficientes, límites)
 # =============================================================================
 p = cidesi_defaults()
+p = p._replace(MA=MA_SIMULINK)          # masa añadida con los términos fuera
+#                                         de la diagonal de tu Mbr+Ma fcn
+#                                         (el default de la librería es diagonal)
 
 # Para cambiar un parámetro SIN editar params.py (devuelve una copia):
 # p = p._replace(KM=p.KM * 1.10)        # +10 % rigidez de pitch
@@ -43,6 +46,7 @@ cfg = ModelConfig(
     kmy_cubic=True,               # T3 = (KMYLIN*beta + KMYCUB*beta^3) V^2
     use_rot_damping=True,         # D_body
     use_alpha_saturation=False,   # NO está en Simulink
+    rot_inertia_mode="RtIR",      # Rot_x'*I_rot*Rot_x, como en Mbr+Ma fcn
     use_surface_model=False,      # agregado por el port
     use_crossflow=False,          # agregado por el port
     use_geodesy=False,            # sin geolocalización

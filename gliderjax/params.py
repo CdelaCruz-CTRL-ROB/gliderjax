@@ -13,6 +13,18 @@ import jax.numpy as jnp
 G0 = 9.81
 RHO = 1000.0          # per VBD block (freshwater)
 
+# Added mass exactly as in the Simulink Mbr+Ma fcn: MA (3x3) and IA (3x3)
+# with small off-diagonals (0.1 kg, 0.01 kg m^2), CA = 0. cidesi_defaults()
+# uses the diagonal only; pass p._replace(MA=MA_SIMULINK) to match Simulink.
+MA_SIMULINK = jnp.array([
+    [3.9112, 0.1,     0.1,    0.0,  0.0,   0.0],
+    [0.1,    58.1700, 0.1,    0.0,  0.0,   0.0],
+    [0.1,    0.1,     48.433, 0.0,  0.0,   0.0],
+    [0.0,    0.0,     0.0,    0.5,  0.01,  0.01],
+    [0.0,    0.0,     0.0,    0.01, 15.83, 0.01],
+    [0.0,    0.0,     0.0,    0.01, 0.01,  15.83],
+])
+
 
 class GliderParams(NamedTuple):
     # ----- four-mass budget (body frame, origin CO) ------------------------
@@ -68,7 +80,7 @@ class GliderParams(NamedTuple):
     vbd_A: jnp.ndarray         # (2,2) VBD main TF (1/(2s+1) padded)
     vbd_B: jnp.ndarray
     vbd_C: jnp.ndarray
-    # ----- added mass (off-diagonals zeroed; leftovers removed) ------------
+    # ----- added mass (diagonal; Simulink off-diagonals in MA_SIMULINK) ----
     MA: jnp.ndarray            # (6,6)
     MA_hull: jnp.ndarray
 
@@ -124,6 +136,9 @@ class ModelConfig:
     use_alpha_saturation: bool = False  # tanh clamp of alpha/beta at ~25 deg
     #                                     inside tau_flowframe. NOT in Simulink
     #                                     (added by the port as a guard).
+    rot_inertia_mode: str = "RIRt"   # rotating-mass inertia in body frame:
+    #                                  "RIRt" = Rx I Rx^T (consistent with r_rot)
+    #                                  "RtIR" = Rx^T I Rx (Simulink Mbr+Ma fcn)
     use_ca_omega: bool = False
     use_ca_translational: bool = False  # Munk block: double counts vs CFD
     use_rot_damping: bool = True

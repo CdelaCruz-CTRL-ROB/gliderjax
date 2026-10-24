@@ -11,9 +11,13 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Control de versiones con git.
 - [ ] Validar contra una corrida de Simulink exportada a CSV (ver
       [VALIDACION.md](VALIDACION.md)).
-- [ ] Comparar contra tus funciones `Mbr+Ma fcn` (inercia de la masa
-      rotatoria: R·I·Rᵀ vs Rᵀ·I·R), `fcn_VBD_actuator` y
-      `fcn_buoyancy_surface`.
+- [x] Comparar contra `Mbr+Ma fcn` y `calculate_coriolis_total_fossen`.
+- [ ] Comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface` y el
+      bloque que arma `r_lin` (¿`r_lin = [0.2861 + rc, 0, 0.001]`?).
+- [ ] Preguntar qué representan los términos fuera de la diagonal de MA
+      (0.1) e IA (0.01), y decidir el default de la librería.
+- [ ] Decidir el default de `rot_inertia_mode` (R·I·Rᵀ es el consistente
+      con `r_rot`; tu Simulink usa Rᵀ·I·R).
 - [ ] Confirmar `BUOY_SIGN` y los demás valores marcados `CONFIRM`.
 - [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
       sin él).
@@ -26,6 +30,48 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       geodesia vienen encendidos).
 - [ ] Cheat sheet: "quiero cambiar X → dónde".
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (3) — Revisión de `Mbr+Ma fcn` y Coriolis
+
+El autor proporcionó las dos funciones. Guardadas tal cual en
+`referencia_simulink/fcn_Mbr_Ma.m` y
+`referencia_simulink/calculate_coriolis_total_fossen.m`. Comparación línea
+por línea en [MODELO.md](MODELO.md), secciones 2.2 y 2.3.
+
+### Resultado
+
+- **Igual:** masas, posiciones, tensores, M_RB, I_b, r_g, C_RB, el
+  cableado de la perturbación de CG (`replicate_dist_wiring`) y C_A anulado
+  (`C_A*0`).
+- **Diferente 1:** rotación del tensor de la masa rotatoria. Simulink:
+  Rᵀ·I·R. Port: R·I·Rᵀ, que es el consistente con `r_rot`. Solo cambia el
+  signo de un término cruzado yz de ~0.001 kg·m².
+- **Diferente 2:** Simulink tiene 0.1 kg (MA) y 0.01 kg·m² (IA) fuera de la
+  diagonal de la masa añadida; el port los había puesto en cero.
+
+### Cambios en la librería
+
+- `ModelConfig.rot_inertia_mode`: `"RIRt"` (default, comportamiento
+  anterior) o `"RtIR"` (= Simulink).
+- `params.MA_SIMULINK`: masa añadida completa de tu función. Se usa con
+  `p._replace(MA=MA_SIMULINK)`. El default sigue siendo diagonal.
+- El script de validación ahora usa las dos opciones de Simulink.
+
+Defaults sin cambio: verificado bit a bit (diferencia 0.0) contra la
+telemetría guardada antes del cambio.
+
+### Efecto medido (escenario de validación, 1200 s)
+
+| Variante vs port por defecto | Horizontal | Profundidad | Yaw |
+|---|---|---|---|
+| solo `RtIR` | 0.0003 m | < 0.0001 m | 0.0009° |
+| solo `MA_SIMULINK` | 0.38 m | 0.0007 m | 0.13° |
+
+La tabla de valores por fase del script no cambia en ningún decimal: con
+ν̇ = 0 la matriz de masa no influye, las diferencias vienen solo de los
+transitorios.
 
 ---
 
@@ -128,7 +174,7 @@ pitch −0.2 rad, 400 s) en ambas copias:
 El autor proporcionó el código (guardado en
 `referencia_simulink/fcn_damping.m`). Comparado línea por línea: el port es
 idéntico **salvo la saturación tanh de α y β**, que no existe en Simulink.
-Detalle en [MODELO.md](MODELO.md), sección 2.
+Detalle en [MODELO.md](MODELO.md), sección 2.1.
 
 ### Experimento: efecto de la saturación tanh
 

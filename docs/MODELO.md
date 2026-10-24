@@ -10,20 +10,21 @@ no comparado contra tu código.
 
 | Componente | Origen | Dónde | Cómo se activa |
 |---|---|---|---|
-| Modelo hidrodinámico en marco del flujo (D, SF, L, T1, T2, T3) | Simulink, **verificado** (sección 2) | `dynamics.py::tau_flowframe` | siempre |
+| Modelo hidrodinámico en marco del flujo (D, SF, L, T1, T2, T3) | Simulink, **verificado** (sección 2.1) | `dynamics.py::tau_flowframe` | siempre |
 | KMR · sign(α) (momento de roll) | Simulink, **verificado** | `tau_flowframe` | `kmr_mode="signum"` (default) |
 | Amortiguamiento rotacional D_body | Simulink, **verificado** | `dynamics.py::tau_rot_damping` | `use_rot_damping=True` (default) |
-| Presupuesto de 4 masas, M_RB, C_RB | Simulink (Mbr+Ma fcn), según el port; **con una corrección** (ver abajo) | `dynamics.py::mass_geometry, M_rigid, C_rigid` | siempre |
-| Masa añadida MA (diagonal) | Simulink, según el port (fuera de diagonal en cero) | `params.py` (`MA`) | siempre |
+| Presupuesto de 4 masas, M_RB, I_b, r_g | Simulink (Mbr+Ma fcn), **verificado** (sección 2.2), salvo la rotación de la inercia de la masa rotatoria | `dynamics.py::mass_geometry, M_rigid` | `rot_inertia_mode` (default `"RIRt"`; Simulink = `"RtIR"`) |
+| C_RB (Coriolis de cuerpo rígido) | Simulink (calculate_coriolis_total_fossen), **verificado** (sección 2.3) | `dynamics.py::C_rigid` | siempre |
+| Masa añadida MA | Simulink, **verificado**: tu código tiene términos fuera de la diagonal (0.1 kg, 0.01 kg·m²); la librería usa solo la diagonal por defecto | `params.py` (`MA` diagonal, `MA_SIMULINK` completa) | `p._replace(MA=MA_SIMULINK)` |
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), según el port | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
 | Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados `CONFIRM`** | `params.py::cidesi_defaults`, `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Reporte, g(η), según el port | `dynamics.py::tau_restoring` | siempre |
-| Cableado de la perturbación dist_xg/dist_yg | Réplica del cableado de Simulink, según el port | `dynamics.py::dynamics` | `replicate_dist_wiring=True` |
+| Cableado de la perturbación dist_xg/dist_yg | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_dist_wiring=True` |
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
 | **Modelo de superficie** | **Agregado por el port** | `dynamics.py::surface_state, tau_surface` | `use_surface_model=True` (default) |
 | **Geodesia** (posición ECEF verdadera) | **Agregado por el port** | `dynamics.py`, `geodesy.py` | `use_geodesy=True` (default) |
-| Bloques C_A (Coriolis de masa añadida) | Agregado (estudios académicos) | `dynamics.py::C_added` | `use_ca_omega`, `use_ca_translational` (default False) |
+| Bloques C_A (Coriolis de masa añadida) | Tu Simulink lo calcula pero lo anula (`C_RB + C_A*0`), **verificado**. El port lo puede encender, pero con otra matriz (`MA_hull`) | `dynamics.py::C_added` | `use_ca_omega`, `use_ca_translational` (default False = Simulink) |
 | Amortiguamiento ∝ V (KpV, KqV, KrV) | Agregado, valores en 0 | `tau_rot_damping` | siempre, sin efecto |
 
 ### Importante para validar contra Simulink
@@ -33,7 +34,10 @@ Con `ModelConfig()` por defecto, superficie, crossflow y geodesia están
 Simulink:
 
 ```python
-cfg = ModelConfig(use_surface_model=False, use_crossflow=False, use_geodesy=False)
+from gliderjax.params import cidesi_defaults, MA_SIMULINK
+p = cidesi_defaults()._replace(MA=MA_SIMULINK)
+cfg = ModelConfig(use_surface_model=False, use_crossflow=False,
+                  use_geodesy=False, rot_inertia_mode="RtIR")
 ```
 
 (`use_alpha_saturation` ya es `False` por defecto.) El script
@@ -43,25 +47,26 @@ explícitamente; ver [VALIDACION.md](VALIDACION.md).
 Verificado bit a bit (2026-10-24): con la saturación encendida y los otros
 tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 
-### Diferencias conocidas con Simulink fuera de la función de damping
+### Diferencias conocidas con Simulink
 
-Según comentarios del port, todavía **no verificadas** contra tu código:
+1. **Inercia de la masa rotatoria** y **términos fuera de la diagonal de
+   MA**: ver sección 2.2. Las dos tienen opción para replicar Simulink y su
+   efecto es despreciable.
+2. **Flotación en superficie** (según comentarios del port, **no
+   verificada**). El comentario de `surface_state` dice que reemplaza una
+   `fcn_buoyancy_surface` "de dos puntos" de tu Simulink. En la
+   configuración equivalente a Simulink (superficie apagada) esa función no
+   está representada, así que las pruebas deben quedarse lejos de z = 0.
+3. **Entradas que vienen de otros bloques** (no verificadas): la posición
+   de la masa móvil `r_lin = [0.2861 + rc, 0, 0.001]` y la del pistón
+   `r_p = [−0.7 + Δx, 0, 0]` (de `fcn_VBD_actuator`).
 
-1. **Inercia de la masa rotatoria.** `mass_geometry` rota el tensor con
-   `R·I·Rᵀ`, y el comentario dice "corregido, antes `Rᵀ·I·R`". Si tu
-   `Mbr+Ma fcn` usa `Rᵀ·I·R`, el port difiere cuando γ ≠ 0. El efecto
-   debería ser pequeño: el tensor de la masa rotatoria es ~0.004 kg·m²,
-   frente a ~20 kg·m² del vehículo.
-2. **Flotación en superficie.** El comentario de `surface_state` dice que
-   reemplaza una `fcn_buoyancy_surface` "de dos puntos" de tu Simulink. En
-   la configuración equivalente a Simulink (superficie apagada) esa función
-   no está representada, así que las pruebas deben quedarse lejos de z = 0.
+Para cerrarlas: comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface`
+y el bloque que arma `r_lin`.
 
-Para cerrarlas: comparar contra tus funciones `Mbr+Ma fcn`,
-`fcn_VBD_actuator` y `fcn_buoyancy_surface`, igual que se hizo con la de
-damping.
+## 2. Comparación con tus funciones de Simulink
 
-## 2. Comparación con tu función de Simulink
+### 2.1 Damping
 
 Referencia: [referencia_simulink/fcn_damping.m](referencia_simulink/fcn_damping.m)
 
@@ -84,6 +89,86 @@ el port coincide con tu función.
 
 Partes de tu función que no se usan (ni en Simulink ni en el port):
 `R_EB`, la entrada `r_cw` y los modelos `D_B2` comentados.
+
+### 2.2 Masas: `Mbr+Ma fcn`
+
+Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
+(revisado 2026-10-24)
+
+| Parte | Simulink | Port | ¿Igual? |
+|---|---|---|---|
+| Masas | m_s 37, m_lin 15, m_rot 5, m_p 1 | `m_static`, `m_lin`, `m_rot`, `m_pist` | sí |
+| r_s | [−0.1241, 0, 0.001] | `r_static` | sí |
+| r_rot | [0.2, R·cos(γ+π/2), R·sin(γ+π/2)], R = 0.07 | [0.2, −R·sin γ, R·cos γ] | sí (misma expresión) |
+| I_s, I_lin, I_rot, I_p | diagonales de tu código | mismos valores | sí |
+| Inercia de la masa rotatoria en cuerpo | `Rot_xᵀ·I_rot·Rot_x` | `Rx·I_rot·Rxᵀ` (default) | **no**, ver abajo |
+| M_RB | `[m·I, −Σ mᵢ s(rᵢ); Σ mᵢ s(rᵢ), I_b]` | `M_rigid(m, r_g, I_b)`, con `m·s(r_g) = Σ mᵢ s(rᵢ)` | sí |
+| I_b | `Σ (Iᵢ − mᵢ s(rᵢ)²)` | `Σ about_CO(Iᵢ, mᵢ, rᵢ)` | sí |
+| r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `r_g_dist` | sí |
+| dist en M e I_b | no entra (M se arma con posiciones sin perturbar) | `replicate_dist_wiring=True` | sí |
+| MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) fuera de la diagonal | solo diagonal | **no**, ver abajo |
+| CA (acoplamiento traslación–rotación de M_A) | 0 (`2.57*0`) | 0 | sí |
+| M = M_RB + M_A | sí | sí | sí |
+
+**Diferencia 1: rotación del tensor de la masa rotatoria.**
+
+- Tu posición `r_rot = Rot_x·[0.2, 0, R]`, así que la masa gira con
+  `Rot_x`. Para ser consistente, su tensor debería girar igual:
+  `Rot_x·I·Rot_xᵀ`. Tu código usa `Rot_xᵀ·I·Rot_x`, que equivale a girar
+  el tensor −γ.
+- Como I_rot es diagonal, las dos formas dan **la misma diagonal**. Solo
+  cambia el **signo** del término cruzado yz de la masa rotatoria,
+  ±(I_zz − I_yy)·sin γ·cos γ.
+- En el I_b total, el término yz vale 0.0112 (port) contra 0.0133
+  (Simulink) a γ = 45°. La diferencia máxima es 0.0022 kg·m², frente a
+  I_yy ≈ 30 kg·m².
+- Switch: `rot_inertia_mode="RtIR"` replica tu código; el default
+  `"RIRt"` es el consistente con `r_rot`.
+
+**Diferencia 2: términos fuera de la diagonal de la masa añadida.**
+
+- Tu código: 0.1 kg en MA (acoplan u–v, u–w, v–w) y 0.01 kg·m² en IA
+  (acoplan p–q, p–r, q–r). Tienes comentada la versión diagonal.
+- El port los puso en cero ("leftovers removed", según su comentario). Por
+  simetría babor–estribor, los acoplamientos u–v, v–w, p–q y q–r deberían
+  ser cero; u–w y p–r podrían no serlo.
+- Opción: `p._replace(MA=MA_SIMULINK)` (constante en `params.py`).
+- **Pregunta abierta:** ¿qué representan esos 0.1 y 0.01? ¿Valores
+  medidos, de CFD o un relleno?
+
+**Efecto medido** (escenario de validación, 1200 s, contra el port por
+defecto):
+
+| Variante | Posición horizontal | Profundidad | Roll | Pitch | Yaw |
+|---|---|---|---|---|---|
+| `RtIR`, MA diagonal | 0.0003 m | < 0.0001 m | 0.0006° | 0.0009° | 0.0009° |
+| `RIRt`, `MA_SIMULINK` | 0.38 m | 0.0007 m | 0.008° | 0.005° | 0.13° |
+| las dos (= Simulink) | 0.38 m | 0.0007 m | 0.008° | 0.006° | 0.13° |
+
+Los valores cuasi-estacionarios por fase no cambian en ningún decimal
+mostrado: con ν̇ = 0, la matriz de masa no influye. Las diferencias vienen
+de los transitorios.
+
+### 2.3 Coriolis: `calculate_coriolis_total_fossen`
+
+Referencia:
+[referencia_simulink/calculate_coriolis_total_fossen.m](referencia_simulink/calculate_coriolis_total_fossen.m)
+(revisado 2026-10-24)
+
+| Parte | Simulink | Port | ¿Igual? |
+|---|---|---|---|
+| C_RB | `[m S(ω), −m S(ω) S(r_g); m S(r_g) S(ω), −S(I_b ω)]` | `C_rigid`, misma matriz | sí |
+| r_g usado en C_RB | el de Mbr+Ma fcn (con dist) | `r_g_dist` | sí |
+| C_A | `[0, −S(a1); −S(a1), −S(a2)]`, a1 = MA·v₁ + CA·v₂, a2 = CAᵀ·v₁ + IA·v₂ | `C_added`, misma estructura | sí |
+| C_A en la ecuación | **anulado**: `C_total = C_RB + C_A*0` | apagado por defecto (`use_ca_*=False`) | sí |
+| Matriz usada en C_A si se enciende | MA, IA de Mbr+Ma fcn | `MA_hull` (otra matriz, no viene de Simulink) | no, pero apagado |
+
+**Conclusión:** C_RB es idéntico y C_A está apagado en ambos. Sin C_A no
+hay momento de Munk explícito. El comentario del port dice que el CFD ya
+lo incluye en KM, así que encenderlo lo contaría dos veces.
+
+No verificado: qué velocidad entra a esta función en tu diagrama (ν o
+ν_r). Sin corriente son iguales, y la validación corre sin corriente.
 
 ## 3. Saturación tanh de α y β
 
@@ -221,6 +306,7 @@ Cambiar cualquiera obliga a recompilar (~5–10 s).
 | `kmr_mode` | `"signum"` | `"signum"` | `"signum"` = KMR·sign(α); `"parity"` = variante suave; `"const"` = sin dependencia de α |
 | `kmy_cubic` | True | True | término cúbico en el momento de yaw |
 | `use_alpha_saturation` | False | False | sección 3 |
+| `rot_inertia_mode` | `"RIRt"` | **`"RtIR"`** | rotación del tensor de la masa rotatoria, sección 2.2 |
 | `use_rot_damping` | True | True | D_body |
 | `use_surface_model` | True | **False** | sección 5 |
 | `use_crossflow` | True | **False** | sección 4 |

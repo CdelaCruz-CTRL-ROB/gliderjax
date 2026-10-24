@@ -8,7 +8,10 @@ Script: [`escenarios/01_validacion_dinamica.py`](../escenarios/01_validacion_din
 
 1. Usa el **modelo equivalente a tu Simulink**, con todos los switches
    escritos explícitamente: sin superficie, sin crossflow, sin
-   geolocalización, sin saturación de alpha.
+   geolocalización, sin saturación de alpha. Además usa la masa añadida
+   completa de tu `Mbr+Ma fcn` (`MA_SIMULINK`) y su rotación de la inercia
+   de la masa rotatoria (`rot_inertia_mode="RtIR"`); ver
+   [MODELO.md](MODELO.md), sección 2.2.
 2. Mueve los actuadores según una **tabla de fases** (comandos constantes
    por tramos, como un Signal Builder).
 3. Imprime los **valores cuasi-estacionarios de cada fase**.

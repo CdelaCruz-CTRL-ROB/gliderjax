@@ -82,9 +82,10 @@ def dxv_from_dB_ref(p: GliderParams, dB_ref):
 
 
 # ----------------------------------------------------------------------------
-# four-mass geometry (exact port of Mbr+Ma fcn, with R I R^T corrected)
+# four-mass geometry (port of Mbr+Ma fcn; rotating-mass inertia per
+# cfg.rot_inertia_mode, see docs/referencia_simulink/fcn_Mbr_Ma.m)
 # ----------------------------------------------------------------------------
-def mass_geometry(p: GliderParams, rc, gamma, dxv):
+def mass_geometry(p: GliderParams, rc, gamma, dxv, rot_inertia_mode="RIRt"):
     r_lin = p.r_lin0 + jnp.array([rc, 0.0, 0.0])
     r_rot = jnp.array([p.x_rot,
                        -p.R_rot * jnp.sin(gamma),
@@ -92,7 +93,10 @@ def mass_geometry(p: GliderParams, rc, gamma, dxv):
     _, r_p, _ = vbd_outputs(p, dxv)
     cg, sg = jnp.cos(gamma), jnp.sin(gamma)
     Rx = jnp.array([[1.0, 0.0, 0.0], [0.0, cg, -sg], [0.0, sg, cg]])
-    I_rot_r = Rx @ p.I_rot @ Rx.T          # corrected: R I R^T (was R^T I R)
+    if rot_inertia_mode == "RtIR":         # Simulink: Rot_x' * I_rot * Rot_x
+        I_rot_r = Rx.T @ p.I_rot @ Rx
+    else:                                  # R I R^T: rotates with r_rot = Rx [x,0,R]
+        I_rot_r = Rx @ p.I_rot @ Rx.T
     m_tot = p.m_static + p.m_lin + p.m_rot + p.m_pist
     r_g = (p.m_static * p.r_static + p.m_lin * r_lin
            + p.m_rot * r_rot + p.m_pist * r_p) / m_tot
@@ -267,7 +271,7 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
     dB_f = p.vbd_C @ x[21:23]
     dxv = dxv_from_dB_ref(p, dB_f)        # static VBD map (incl. stroke sat)
 
-    m_tot, r_g, I_b = mass_geometry(p, rc, gamma, dxv)
+    m_tot, r_g, I_b = mass_geometry(p, rc, gamma, dxv, cfg.rot_inertia_mode)
     B, r_p, x_b = vbd_outputs(p, dxv)
 
     if cfg.use_surface_model:
