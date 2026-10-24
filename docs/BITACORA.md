@@ -1,10 +1,95 @@
 # Bitácora
 
 Registro de pasos, experimentos y decisiones. Lo más reciente arriba.
+El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
+
+## Pendientes (lista viva)
+
+- [x] Saturación tanh como switch, apagada por defecto (= Simulink).
+- [x] Script de validación en lazo abierto, sin geolocalización.
+- [x] `scope.py`: guardar/cargar telemetría, comparar corridas, vistas nuevas.
+- [x] Control de versiones con git.
+- [ ] Validar contra una corrida de Simulink exportada a CSV (ver
+      [VALIDACION.md](VALIDACION.md)).
+- [ ] Comparar contra tus funciones `Mbr+Ma fcn` (inercia de la masa
+      rotatoria: R·I·Rᵀ vs Rᵀ·I·R), `fcn_VBD_actuator` y
+      `fcn_buoyancy_surface`.
+- [ ] Confirmar `BUOY_SIGN` y los demás valores marcados `CONFIRM`.
+- [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
+      sin él).
+- [ ] DONE con flotabilidad positiva (confirmar contra V2).
+- [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
+- [ ] Reemplazar controladores provisionales por los bloques de Simulink
+      (`Pitch_control`, `Yaw_control`, `Roll control`).
+- [ ] Script de misión por waypoints (`escenarios/02_...`).
+- [ ] Revisar los defaults de `ModelConfig` (hoy superficie, crossflow y
+      geodesia vienen encendidos).
+- [ ] Cheat sheet: "quiero cambiar X → dónde".
+- [ ] Futuro: formación de N planeadores.
 
 ---
 
-## 2026-10-24 — Reorganización y diagnóstico
+## 2026-10-24 (2) — Librería + script de validación en lazo abierto
+
+Objetivo: tener la librería con toda la dinámica y un script para validarla
+en lazo abierto, sin geolocalización, graficando lo pertinente.
+
+### Git
+
+Repositorio local en `sim/gliderjax/` (autor `cdelacruz`,
+cdelacruz.ctrl@gmail.com, configurado solo para este repositorio).
+`.gitignore`: `out/`, `*.npz`, `__pycache__/`.
+
+| Commit | Contenido |
+|---|---|
+| v1: copia exacta | punto de partida = `_old/gliderjax_WP_2026-07` |
+| docs | documentación inicial |
+| dynamics | saturación como switch, línea muerta, `B_net` |
+| scope + autopilot | vistas y análisis nuevos, controlador de lazo abierto |
+| escenarios + docs | script de validación, esta entrada |
+
+### Cambios en la librería
+
+- `ModelConfig.use_alpha_saturation` (default False). **Cambia el
+  comportamiento por defecto**: los scripts de v1 (`run_test.py`, demos)
+  ahora corren sin saturación. `run_test.py` termina a 139.9 m en lugar
+  de 139.8 m.
+- Se quitó una línea muerta en `dynamics.py` (`x_b_eff` se calculaba dos
+  veces y la primera se descartaba).
+- Telemetría nueva `B_net` = flotabilidad neta [N].
+- `autopilot.make_open_loop_controller(tabla)`: comandos constantes por
+  tramos.
+- `scope.py`:
+  - figuras: `overview` (resumen de una página), `actuators_plot`,
+    `flow_frame_wrench` (= Fh, Th de `fcn_damping.m`), `trajectory_xy`,
+    `trajectory_3d`;
+  - `compare` para superponer corridas, `phase_summary` para los valores
+    por fase;
+  - `save_tel` / `load_tel` y `from_simulink_csv`;
+  - `moments_breakdown` ahora incluye superficie y crossflow (antes los
+    omitía) y la suma de todos los términos;
+  - ya no fuerza el backend `Agg`: con `scope.KEEP_OPEN = True` +
+    `plt.show()` las figuras se abren con zoom y pan;
+  - `yaw_deg` se desenvuelve, sin saltos de ±180°.
+
+### Verificación (diferencia máxima en η, ν_r, α, β, V)
+
+| Comparación | Resultado |
+|---|---|
+| nueva con saturación ON (resto defaults) vs v1 WP | 0.0 |
+| nueva con saturación ON + superficie/crossflow/geodesia OFF vs v1 NO_WP | 0.0 |
+| nueva con saturación OFF vs experimento sin saturación | 0.0 |
+
+### Primera corrida del script de validación
+
+Ver tabla de resultados en [VALIDACION.md](VALIDACION.md). Planeo recto:
+pitch ∓38.5°/+36.6°, α ±1.34°, V ≈ 0.56 m/s, razón de planeo ≈ 1.2.
+Con γ = +30°: roll −26°, bajando gira a la izquierda y subiendo a la
+derecha.
+
+---
+
+## 2026-10-24 (1) — Reorganización y diagnóstico
 
 ### Decisiones
 
@@ -16,7 +101,7 @@ Registro de pasos, experimentos y decisiones. Lo más reciente arriba.
   separadas.
 - **Construir paso a paso, documentando todo** en `docs/`.
 
-### Paso 1: archivar v1 y crear la versión de trabajo
+### Archivar v1 y crear la versión de trabajo
 
 - `gliderjax/` → `_old/gliderjax_WP_2026-07/`
 - `gliderjax_NO_WP/` → `_old/gliderjax_NO_WP_2026-07/`
@@ -37,9 +122,6 @@ pitch −0.2 rad, 400 s) en ambas copias:
 |---|---|
 | NO_WP vs WP con los 3 switches en False | **0.0** (bit a bit) |
 | NO_WP vs WP con switches por defecto | 1.9 m en profundidad, 0.23 rad en α |
-
-Los switches vienen en True por defecto: el `ModelConfig()` por defecto
-**no** es el modelo de Simulink.
 
 ### Revisión de la función de damping de Simulink
 
@@ -71,20 +153,3 @@ modos; sign(α) solo cambia la tasa de giro en subida (+45 %). Detalle en
 - El flare de CLIMB no tiene efecto (`FLARE_DEPTH = SURF_EPS`).
 
 Ver [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 4.
-
-### Pendientes
-
-- [ ] Saturación tanh como switch, apagada por defecto (= Simulink).
-- [ ] DONE con flotabilidad positiva (confirmar contra V2).
-- [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
-- [ ] Confirmar `BUOY_SIGN` y los demás valores marcados `CONFIRM`.
-- [ ] Reemplazar controladores provisionales por los bloques de Simulink
-      (`Pitch_control`, `Yaw_control`, `Roll control`).
-- [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
-      sin él).
-- [ ] Scripts de escenarios: validación (modelo Simulink) y misión WP.
-- [ ] `scope.py`: guardar/cargar telemetría, comparar corridas, gráficas de
-      misión.
-- [ ] Cheat sheet: "quiero cambiar X → dónde".
-- [ ] Control de versiones con git.
-- [ ] Futuro: formación de N planeadores.

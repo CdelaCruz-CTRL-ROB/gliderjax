@@ -13,13 +13,13 @@ no comparado contra tu código.
 | Modelo hidrodinámico en marco del flujo (D, SF, L, T1, T2, T3) | Simulink, **verificado** (sección 2) | `dynamics.py::tau_flowframe` | siempre |
 | KMR · sign(α) (momento de roll) | Simulink, **verificado** | `tau_flowframe` | `kmr_mode="signum"` (default) |
 | Amortiguamiento rotacional D_body | Simulink, **verificado** | `dynamics.py::tau_rot_damping` | `use_rot_damping=True` (default) |
-| Presupuesto de 4 masas, M_RB, C_RB | Simulink (Mbr+Ma fcn), según el port | `dynamics.py::mass_geometry, M_rigid, C_rigid` | siempre |
+| Presupuesto de 4 masas, M_RB, C_RB | Simulink (Mbr+Ma fcn), según el port; **con una corrección** (ver abajo) | `dynamics.py::mass_geometry, M_rigid, C_rigid` | siempre |
 | Masa añadida MA (diagonal) | Simulink, según el port (fuera de diagonal en cero) | `params.py` (`MA`) | siempre |
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), según el port | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
 | Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados `CONFIRM`** | `params.py::cidesi_defaults`, `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Reporte, g(η), según el port | `dynamics.py::tau_restoring` | siempre |
 | Cableado de la perturbación dist_xg/dist_yg | Réplica del cableado de Simulink, según el port | `dynamics.py::dynamics` | `replicate_dist_wiring=True` |
-| **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe`, líneas 204-206 | **siempre, sin switch** |
+| **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
 | **Modelo de superficie** | **Agregado por el port** | `dynamics.py::surface_state, tau_surface` | `use_surface_model=True` (default) |
 | **Geodesia** (posición ECEF verdadera) | **Agregado por el port** | `dynamics.py`, `geodesy.py` | `use_geodesy=True` (default) |
@@ -36,10 +36,30 @@ Simulink:
 cfg = ModelConfig(use_surface_model=False, use_crossflow=False, use_geodesy=False)
 ```
 
-Con esos tres en `False`, la versión de trabajo da resultados **idénticos bit
-a bit** a la v1 sin waypoints (verificado 2026-10-24, ver bitácora).
+(`use_alpha_saturation` ya es `False` por defecto.) El script
+`escenarios/01_validacion_dinamica.py` escribe todos los switches
+explícitamente; ver [VALIDACION.md](VALIDACION.md).
 
-Aun así queda una diferencia con Simulink: la saturación tanh (sección 3).
+Verificado bit a bit (2026-10-24): con la saturación encendida y los otros
+tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
+
+### Diferencias conocidas con Simulink fuera de la función de damping
+
+Según comentarios del port, todavía **no verificadas** contra tu código:
+
+1. **Inercia de la masa rotatoria.** `mass_geometry` rota el tensor con
+   `R·I·Rᵀ`, y el comentario dice "corregido, antes `Rᵀ·I·R`". Si tu
+   `Mbr+Ma fcn` usa `Rᵀ·I·R`, el port difiere cuando γ ≠ 0. El efecto
+   debería ser pequeño: el tensor de la masa rotatoria es ~0.004 kg·m²,
+   frente a ~20 kg·m² del vehículo.
+2. **Flotación en superficie.** El comentario de `surface_state` dice que
+   reemplaza una `fcn_buoyancy_surface` "de dos puntos" de tu Simulink. En
+   la configuración equivalente a Simulink (superficie apagada) esa función
+   no está representada, así que las pruebas deben quedarse lejos de z = 0.
+
+Para cerrarlas: comparar contra tus funciones `Mbr+Ma fcn`,
+`fcn_VBD_actuator` y `fcn_buoyancy_surface`, igual que se hizo con la de
+damping.
 
 ## 2. Comparación con tu función de Simulink
 
@@ -53,12 +73,14 @@ Referencia: [referencia_simulink/fcn_damping.m](referencia_simulink/fcn_damping.
 | Coeficientes | KD0 5.9, KD 214.62, Kbeta −56.66, KL0 0.326713·0, Kalpha 308.9754, KMR 4.5194, KM0 −0.0328, KM −12.48, KMYLIN 15.04, KMYCUB −398.442 | mismos valores (`KL` = Kalpha, `KL0` = 0) | sí |
 | α, β | `atan2(w,u)`, `asin(v/V)` | igual (protección numérica si u≈0 o V≈0) | sí |
 | KMR | `KMR*sign(alpha)` | `kmr_mode="signum"`, usa α sin saturar | sí |
-| D, SF, L, TDL1, TDL2, TDL3 | usan **α y β directos** | usan **α_e, β_e saturados** | **NO** |
+| D, SF, L, TDL1, TDL2, TDL3 | usan **α y β directos** | α y β directos por defecto; saturados solo con `use_alpha_saturation=True` | sí (desde 2026-10-24; antes **no**) |
 | R_CB (flujo → cuerpo) | matriz de tu código | `R_flow_to_body`, misma matriz | sí |
 | Fuerzas y momentos rotados con R_CB | sí | sí | sí |
 | Signo | `D_flow = −[F;T]`, se resta en la ecuación | suma `+[F;T]` al lado derecho | equivalente, *asumiendo* que tu diagrama resta `D_total` |
 
-**Conclusión:** el port de tu función es exacto salvo la saturación.
+**Conclusión:** el port de tu función es exacto salvo la saturación, que
+desde 2026-10-24 está apagada por defecto. Con `use_alpha_saturation=False`
+el port coincide con tu función.
 
 Partes de tu función que no se usan (ni en Simulink ni en el port):
 `R_EB`, la entrada `r_cw` y los modelos `D_B2` comentados.
@@ -70,6 +92,9 @@ A_MAX = 0.44                              # rad, ~25°
 alpha_e = A_MAX * tanh(alpha / A_MAX)     # ≈ alpha si alpha es chico
 beta_e  = A_MAX * tanh(beta  / A_MAX)
 ```
+
+**Estado:** switch `use_alpha_saturation` en `ModelConfig`, **apagado por
+defecto** (= Simulink) desde 2026-10-24.
 
 **Qué hace:** limita suavemente α y β a ~25° dentro de las fórmulas de
 D, SF, L y los momentos. Se aplica siempre (sumergido o no), pero solo cambia
@@ -96,8 +121,6 @@ hasta tener el crossflow. Quedaron las dos cosas.
 - Sin saturación no hubo NaN ni inestabilidad en ningún caso. Pero β nunca
   pasó de 3°, así que el término cúbico de yaw (−398·β³) no se probó con
   giros cerrados.
-
-**Pendiente:** convertirla en switch, apagado por defecto (= Simulink).
 
 **Contexto:** fuera de α pequeño, el modelo en términos de α y β no
 representa bien la física (tema abierto del autor). La saturación, el
@@ -197,6 +220,7 @@ Cambiar cualquiera obliga a recompilar (~5–10 s).
 |---|---|---|---|
 | `kmr_mode` | `"signum"` | `"signum"` | `"signum"` = KMR·sign(α); `"parity"` = variante suave; `"const"` = sin dependencia de α |
 | `kmy_cubic` | True | True | término cúbico en el momento de yaw |
+| `use_alpha_saturation` | False | False | sección 3 |
 | `use_rot_damping` | True | True | D_body |
 | `use_surface_model` | True | **False** | sección 5 |
 | `use_crossflow` | True | **False** | sección 4 |

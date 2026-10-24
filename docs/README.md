@@ -11,6 +11,7 @@ hay en el modelo, de dónde viene cada parte y dónde se cambia cada cosa**.
 
 | Archivo | Contenido |
 |---|---|
+| [VALIDACION.md](VALIDACION.md) | Script de validación en lazo abierto: cómo usarlo, qué muestra cada figura, cómo comparar con Simulink, señales disponibles |
 | [MODELO.md](MODELO.md) | Inventario del modelo físico: qué viene de Simulink y qué se agregó, comparación con tu código, saturación, crossflow, superficie, inversión del giro |
 | [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales (provisionales), FSM de waypoints estado por estado, problemas conocidos |
 | [BITACORA.md](BITACORA.md) | Registro fechado de cada paso, experimento y decisión |
@@ -32,8 +33,11 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
       navigation.py                     FSM de waypoints (V2) y GPS
       geodesy.py                        conversiones lat/lon <-> ECEF <-> NED
       scope.py                          gráficas tipo "scope" de Simulink
-    run_test.py                       script de prueba editable
-    demos/                            ejemplos (lazo abierto, lazo cerrado, misión, Monte Carlo)
+    escenarios/                       SCRIPTS DE TRABAJO, uno por caso de uso
+      01_validacion_dinamica.py         lazo abierto, modelo = Simulink
+    out/                              resultados (figuras, telemetría); no va a git
+    run_test.py                       script de prueba de v1 (se conserva)
+    demos/                            ejemplos de v1 (lazo abierto, lazo cerrado, misión, Monte Carlo)
     validation/                       comparación contra CSV exportados de Simulink
     docs/                             esta documentación
 ```
@@ -47,7 +51,7 @@ parámetros y llaman a la simulación.
 Desde `GLIDER_JAX\sim\gliderjax`:
 
 ```
-..\Scripts\python.exe run_test.py
+..\Scripts\python.exe escenarios\01_validacion_dinamica.py
 ..\Scripts\python.exe demos\demo_mission.py
 ```
 
@@ -70,3 +74,18 @@ El `run_test.py` de NO_WP tiene tus últimas ediciones: `N_FRAMES = 259000`
 Se construye paso a paso. Cada cambio al código o hallazgo se registra en
 [BITACORA.md](BITACORA.md) con fecha, y se actualiza el documento que
 corresponda.
+
+### Historial con git
+
+`gliderjax/` es un repositorio git local (sin cuenta ni GitHub). Cada paso
+es un commit. Desde `GLIDER_JAX\sim\gliderjax`:
+
+```
+git log --oneline              lista de pasos
+git show <id>                  qué cambió en un paso
+git diff                       cambios aún sin guardar en un commit
+git diff <id> -- gliderjax     comparar la librería con un paso anterior
+```
+
+El primer commit es la copia exacta de v1, así que cualquier diferencia con
+la versión vieja se ve con `git diff <id_del_primer_commit>`.
