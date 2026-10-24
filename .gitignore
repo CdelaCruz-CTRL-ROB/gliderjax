@@ -1,0 +1,7 @@
+# figuras y telemetría generadas
+out/
+*.npz
+
+# Python
+__pycache__/
+*.pyc
