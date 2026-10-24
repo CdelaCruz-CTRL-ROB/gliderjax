@@ -3,7 +3,9 @@
 Three modes, one architecture (all compatible with make_simulator):
 
   MANUAL          your own controller fn returning raw actuator cmds
-                  (run_test.py unchanged -- nothing here needed)
+                  (run_test.py unchanged -- nothing here needed), or
+                  make_open_loop_controller(schedule): piecewise-constant
+                  commands from a table of phases
   SEMI-AUTOMATIC  make_attitude_controller(refs_fn):
                   refs_fn(t) -> [pitch_ref, yaw_ref, roll_ref?, dB_cmd, cg]
                   attitude loops + reference shaping, NO state machine
@@ -68,6 +70,24 @@ def attitude_step(x, params, refs, cg, integ, dt_ctrl):
     # ---- roll -> gamma (plant sign: gamma>0 -> phi<0, hence the minus)
     gamma_cmd = -K_ROLL * (roll_ref - phi)
     return jnp.array([rc_cmd, gamma_cmd, 0.0]), integ, roll_ref
+
+
+def make_open_loop_controller(schedule):
+    """MANUAL mode, time-scheduled (like a Simulink Signal Builder).
+    schedule = [(t_start, rc_cmd [m], gamma_cmd [rad], dB_cmd [N]), ...]
+    sorted by t_start; each row's commands hold until the next row starts.
+    dB_cmd in PHYSICAL VBD convention (negative = dive).
+    Returns (ctrl_state0, controller)."""
+    sch = jnp.asarray(schedule, dtype=float)
+    t_starts, rows = sch[:, 0], sch[:, 1:4]
+
+    def controller(t, x, cs, params):
+        # +1e-6: t is accumulated as t + dt, so a phase starting at 300.0
+        # must not wait one extra step because t reads 299.99999999
+        i = jnp.searchsorted(t_starts, t + 1e-6, side="right") - 1
+        return rows[jnp.clip(i, 0, rows.shape[0] - 1)], cs
+
+    return jnp.zeros(1), controller
 
 
 def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None):
