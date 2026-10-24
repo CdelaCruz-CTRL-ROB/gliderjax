@@ -82,21 +82,19 @@ def dxv_from_dB_ref(p: GliderParams, dB_ref):
 
 
 # ----------------------------------------------------------------------------
-# four-mass geometry (port of Mbr+Ma fcn; rotating-mass inertia per
-# cfg.rot_inertia_mode, see docs/referencia_simulink/fcn_Mbr_Ma.m)
+# four-mass geometry (port of Mbr+Ma fcn, docs/referencia_simulink/
+# fcn_Mbr_Ma.m; rotating-mass inertia as R I R^T, see docs/MODELO.md 2.2)
 # ----------------------------------------------------------------------------
-def mass_geometry(p: GliderParams, rc, gamma, dxv, rot_inertia_mode="RIRt"):
-    r_lin = p.r_lin0 + jnp.array([rc, 0.0, 0.0])
+def mass_geometry(p: GliderParams, rc, gamma, dxv):
+    r_lin = p.r_lin0 + jnp.array([rc + p.disturb_xlin, 0.0, 0.0])
     r_rot = jnp.array([p.x_rot,
                        -p.R_rot * jnp.sin(gamma),
                         p.R_rot * jnp.cos(gamma)])
     _, r_p, _ = vbd_outputs(p, dxv)
     cg, sg = jnp.cos(gamma), jnp.sin(gamma)
     Rx = jnp.array([[1.0, 0.0, 0.0], [0.0, cg, -sg], [0.0, sg, cg]])
-    if rot_inertia_mode == "RtIR":         # Simulink: Rot_x' * I_rot * Rot_x
-        I_rot_r = Rx.T @ p.I_rot @ Rx
-    else:                                  # R I R^T: rotates with r_rot = Rx [x,0,R]
-        I_rot_r = Rx @ p.I_rot @ Rx.T
+    I_rot_r = Rx @ p.I_rot @ Rx.T          # rotates with r_rot = Rx [x,0,R]
+    #                                        (Simulink has Rx^T I Rx: error)
     m_tot = p.m_static + p.m_lin + p.m_rot + p.m_pist
     r_g = (p.m_static * p.r_static + p.m_lin * r_lin
            + p.m_rot * r_rot + p.m_pist * r_p) / m_tot
@@ -139,7 +137,25 @@ def C_added(MA, nu):
 
 
 # ----------------------------------------------------------------------------
-# free-surface transit model (replaces the two-point fcn_buoyancy_surface):
+# Simulink surface model (exact port of fcn_buoyancy_surface): emergence of
+# the hull top at nose and tail only, no roll. cfg.surface_model="simulink"
+# ----------------------------------------------------------------------------
+def surface_two_point(p: GliderParams, z, th):
+    """Returns (B_scale, dxb_surface)."""
+    Lh, H = p.hull_L / 2.0, p.hull_H
+    sp, cp = jnp.sin(th), jnp.cos(th)
+    e_nose = jnp.clip(-(z - Lh * sp - 0.5 * H * cp) / H, 0.0, 1.0)
+    e_tail = jnp.clip(-(z + Lh * sp - 0.5 * H * cp) / H, 0.0, 1.0)
+    avg = 0.5 * (e_nose + e_tail)
+    e_sum = e_nose + e_tail
+    dxb = jnp.where(e_sum > 1e-8,
+                    -Lh * (e_nose - e_tail) / jnp.maximum(e_sum, 1e-8) * avg,
+                    0.0)
+    return 1.0 - avg, dxb
+
+
+# ----------------------------------------------------------------------------
+# free-surface transit model (port's replacement of the two-point model):
 # 9-station immersion integral of the tilted hull -> buoyancy scale, CoB
 # shift, added-mass scale, surface-proximity envelope; plus water-entry
 # momentum flux and radiation damping (identify B33/B55/dmA_dz via a pool
@@ -271,29 +287,33 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
     dB_f = p.vbd_C @ x[21:23]
     dxv = dxv_from_dB_ref(p, dB_f)        # static VBD map (incl. stroke sat)
 
-    m_tot, r_g, I_b = mass_geometry(p, rc, gamma, dxv, cfg.rot_inertia_mode)
+    m_tot, r_g, I_b = mass_geometry(p, rc, gamma, dxv)
     B, r_p, x_b = vbd_outputs(p, dxv)
 
-    if cfg.use_surface_model:
+    if cfg.surface_model == "full":
         B_scale, dxb_s, ma_scale, sigma = surface_state(p, eta[2], eta[3], eta[4])
+    elif cfg.surface_model == "simulink":
+        B_scale, dxb_s = surface_two_point(p, eta[2], eta[4])
+        ma_scale, sigma = 1.0, 0.0
     else:
         B_scale, dxb_s, ma_scale, sigma = 1.0, 0.0, 1.0, 0.0
     B_eff = B * B_scale
-    x_b_eff = x_b + dxb_s      # VBD shift + immersed-centroid shift (simple sum)
+    x_b_eff = x_b + dxb_s      # VBD shift + surface shift (simple sum, as Simulink)
 
-    # disturbance wiring replication: dist enters restoring + C_RB via r_g,
-    # but NOT M_RB (the Simulink builds M from undisturbed positions).
-    r_g_dist = r_g + jnp.array([p.dist_xg, p.dist_yg, 0.0])
-    r_g_M = r_g if cfg.replicate_dist_wiring else r_g_dist
+    # disturbance wiring replication: disturb_xg/yg enter restoring + C_RB
+    # via r_g, but NOT M_RB (the Simulink builds M from undisturbed positions).
+    r_g_dist = r_g + jnp.array([p.disturb_xg, p.disturb_yg, 0.0])
+    r_g_M = r_g if cfg.replicate_disturb_wiring else r_g_dist
     r_g_C = r_g_dist
 
     MRB = M_rigid(m_tot, r_g_M, I_b)
-    M = MRB + p.MA * (ma_scale if cfg.use_surface_model else 1.0)
+    M = MRB + p.MA * ma_scale
 
     tau_hs = tau_restoring(p, eta, r_g_dist, m_tot, B_eff, x_b_eff)
     tau_fb, tau_ff, alpha, beta, V = tau_flowframe(p, cfg, nu_r)
     tau_dr = tau_rot_damping(p, cfg, nu_r, V)
-    tau_sf = tau_surface(p, sigma, nu_r) if cfg.use_surface_model else jnp.zeros(6)
+    tau_sf = (tau_surface(p, sigma, nu_r) if cfg.surface_model == "full"
+              else jnp.zeros(6))
     tau_cf = tau_crossflow(p, nu_r) if cfg.use_crossflow else jnp.zeros(6)
     tau_crb = -C_rigid(m_tot, r_g_C, I_b, nu_r) @ nu_r
 
@@ -335,8 +355,8 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
         "tau_CA": tau_ca, "tau_restoring": tau_hs,
         "r_g": r_g_dist, "B": B_eff, "x_b": x_b_eff,
         "B_net": B_eff - m_tot * G0,      # net buoyancy [N], + = floats
-        "B_scale": B_scale if cfg.use_surface_model else jnp.asarray(1.0),
-        "sigma_surface": sigma if cfg.use_surface_model else jnp.asarray(0.0),
+        "B_scale": jnp.asarray(B_scale),
+        "sigma_surface": jnp.asarray(sigma),
         "tau_surface": tau_sf, "tau_crossflow": tau_cf,
         "ecef": x[23:26],
         "actuators": jnp.array([rc, gamma, dxv]),

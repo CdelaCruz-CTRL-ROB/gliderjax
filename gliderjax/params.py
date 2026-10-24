@@ -13,18 +13,6 @@ import jax.numpy as jnp
 G0 = 9.81
 RHO = 1000.0          # per VBD block (freshwater)
 
-# Added mass exactly as in the Simulink Mbr+Ma fcn: MA (3x3) and IA (3x3)
-# with small off-diagonals (0.1 kg, 0.01 kg m^2), CA = 0. cidesi_defaults()
-# uses the diagonal only; pass p._replace(MA=MA_SIMULINK) to match Simulink.
-MA_SIMULINK = jnp.array([
-    [3.9112, 0.1,     0.1,    0.0,  0.0,   0.0],
-    [0.1,    58.1700, 0.1,    0.0,  0.0,   0.0],
-    [0.1,    0.1,     48.433, 0.0,  0.0,   0.0],
-    [0.0,    0.0,     0.0,    0.5,  0.01,  0.01],
-    [0.0,    0.0,     0.0,    0.01, 15.83, 0.01],
-    [0.0,    0.0,     0.0,    0.01, 0.01,  15.83],
-])
-
 
 class GliderParams(NamedTuple):
     # ----- four-mass budget (body frame, origin CO) ------------------------
@@ -80,7 +68,7 @@ class GliderParams(NamedTuple):
     vbd_A: jnp.ndarray         # (2,2) VBD main TF (1/(2s+1) padded)
     vbd_B: jnp.ndarray
     vbd_C: jnp.ndarray
-    # ----- added mass (diagonal; Simulink off-diagonals in MA_SIMULINK) ----
+    # ----- added mass (Simulink values, port-starboard symmetry imposed) ----
     MA: jnp.ndarray            # (6,6)
     MA_hull: jnp.ndarray
 
@@ -124,8 +112,10 @@ class GliderParams(NamedTuple):
     gps_sigma_m: jnp.ndarray   # horizontal fix noise 1-sigma [m] (0 = ideal)
     gps_gate_depth: jnp.ndarray  # fixes available only when z < this [m]
     # ----- disturbances & environment ---------------------------------------
-    dist_xg: jnp.ndarray       # parametric CG disturbance (restoring+coriolis
-    dist_yg: jnp.ndarray       #  only, replicating the Simulink wiring)
+    disturb_xg: jnp.ndarray    # CG disturbance [m] (restoring + coriolis
+    disturb_yg: jnp.ndarray    #  only, replicating the Simulink wiring)
+    disturb_xlin: jnp.ndarray  # moving-mass position disturbance [m]: added
+    #                            to r_lin, so it enters M, I_b and r_g
     current_n: jnp.ndarray
 
 
@@ -136,16 +126,16 @@ class ModelConfig:
     use_alpha_saturation: bool = False  # tanh clamp of alpha/beta at ~25 deg
     #                                     inside tau_flowframe. NOT in Simulink
     #                                     (added by the port as a guard).
-    rot_inertia_mode: str = "RIRt"   # rotating-mass inertia in body frame:
-    #                                  "RIRt" = Rx I Rx^T (consistent with r_rot)
-    #                                  "RtIR" = Rx^T I Rx (Simulink Mbr+Ma fcn)
     use_ca_omega: bool = False
     use_ca_translational: bool = False  # Munk block: double counts vs CFD
     use_rot_damping: bool = True
-    use_surface_model: bool = True      # immersion scaling + entry + radiation
+    surface_model: str = "full"         # "none" | "simulink" (two-point
+    #                                     fcn_buoyancy_surface) | "full" (9
+    #                                     stations + added mass + entry/radiation)
     use_crossflow: bool = True          # large-incidence quadratic drag blend
     use_geodesy: bool = True            # integrate ECEF truth position
-    replicate_dist_wiring: bool = True  # dist enters C_RB+restoring, NOT M_RB
+    replicate_disturb_wiring: bool = True  # disturb_xg/yg enter C_RB +
+    #                                        restoring, NOT M_RB (Simulink)
 
 
 def zoh_tf(num, den, dt, n_states):
@@ -211,7 +201,16 @@ def cidesi_defaults(dt=0.05,
         rot_rate=jnp.asarray(rot_rate), rot_A=rA, rot_B=rB, rot_C=rC,
         vbdpre_a=vpa, vbdpre_b=vpb, vbdpre_c=vpc,
         vbd_rate_N=jnp.asarray(vbd_rate_N), vbd_A=vA, vbd_B=vB, vbd_C=vC,
-        MA=jnp.diag(jnp.array([3.9112, 58.17, 48.433, 0.5, 15.83, 15.83])),
+        # Simulink MA/IA with port-starboard symmetry: u-w and p-r couplings
+        # kept, u-v, v-w, p-q, q-r set to zero.
+        MA=jnp.array([
+            [3.9112, 0.0,   0.1,    0.0,  0.0,   0.0],
+            [0.0,    58.17, 0.0,    0.0,  0.0,   0.0],
+            [0.1,    0.0,   48.433, 0.0,  0.0,   0.0],
+            [0.0,    0.0,   0.0,    0.5,  0.0,   0.01],
+            [0.0,    0.0,   0.0,    0.0,  15.83, 0.0],
+            [0.0,    0.0,   0.0,    0.01, 0.0,   15.83],
+        ]),
         MA_hull=jnp.diag(jnp.array([3.9112, 45.0, 40.0, 0.1, 12.0, 12.0])),
         KD0=jnp.asarray(5.9), KD=jnp.asarray(214.62),
         KL0=jnp.asarray(0.0), KL=jnp.asarray(308.9754),
@@ -228,7 +227,8 @@ def cidesi_defaults(dt=0.05,
         Cd_cross_y=jnp.asarray(200.0), Cd_cross_z=jnp.asarray(200.0),
         chi_blend=jnp.asarray(0.40), chi_width=jnp.asarray(0.12),
         gps_sigma_m=jnp.asarray(0.0), gps_gate_depth=jnp.asarray(0.7),
-        dist_xg=jnp.asarray(0.0), dist_yg=jnp.asarray(0.0),
+        disturb_xg=jnp.asarray(0.0), disturb_yg=jnp.asarray(0.0),
+        disturb_xlin=jnp.asarray(0.0),
         current_n=jnp.zeros(3),
     )
 

@@ -21,20 +21,17 @@ sys.path.insert(0, RAIZ)          # para importar la librería gliderjax
 import numpy as np
 import matplotlib.pyplot as plt
 from gliderjax import ModelConfig, make_simulator, initial_state, scope
-from gliderjax.params import cidesi_defaults, MA_SIMULINK
+from gliderjax.params import cidesi_defaults
 from gliderjax.autopilot import make_open_loop_controller
 
 # =============================================================================
 # 1) PARÁMETROS FÍSICOS (masas, coeficientes, límites)
 # =============================================================================
 p = cidesi_defaults()
-p = p._replace(MA=MA_SIMULINK)          # masa añadida con los términos fuera
-#                                         de la diagonal de tu Mbr+Ma fcn
-#                                         (el default de la librería es diagonal)
 
 # Para cambiar un parámetro SIN editar params.py (devuelve una copia):
 # p = p._replace(KM=p.KM * 1.10)        # +10 % rigidez de pitch
-# p = p._replace(dist_xg=0.01)          # perturbación de CG de 1 cm
+# p = p._replace(disturb_xg=0.01)          # perturbación de CG de 1 cm
 # Lista completa de campos: gliderjax/params.py (GliderParams).
 
 # =============================================================================
@@ -46,13 +43,12 @@ cfg = ModelConfig(
     kmy_cubic=True,               # T3 = (KMYLIN*beta + KMYCUB*beta^3) V^2
     use_rot_damping=True,         # D_body
     use_alpha_saturation=False,   # NO está en Simulink
-    rot_inertia_mode="RtIR",      # Rot_x'*I_rot*Rot_x, como en Mbr+Ma fcn
-    use_surface_model=False,      # agregado por el port
+    surface_model="simulink",     # tu fcn_buoyancy_surface (2 puntos)
     use_crossflow=False,          # agregado por el port
     use_geodesy=False,            # sin geolocalización
     use_ca_omega=False,           # Coriolis de masa añadida: apagado
     use_ca_translational=False,   #   (Simulink anula C_A)
-    replicate_dist_wiring=True,   # perturbación de CG cableada como Simulink
+    replicate_disturb_wiring=True,  # perturbación de CG cableada como Simulink
 )
 
 # =============================================================================
