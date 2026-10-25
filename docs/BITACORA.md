@@ -54,6 +54,50 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 
 ---
 
+## 2026-10-24 (11) — Un lazo por función, modos pitch_roll / rumbo, bug del periodo de control
+
+### Controladores separados
+
+Pedido del autor: sintonizar primero pitch y roll cada uno por su lado, y
+después pasar a que la referencia de roll venga del control de yaw.
+
+- `autopilot.py`: `attitude_step` se partió en `pitch_control`,
+  `roll_control` y `yaw_control`, cada uno con su memoria de `N_MEM = 4`
+  números (antes había un solo número para todo el controlador).
+- `attitude_step(..., roll_from_yaw)`: la referencia de roll viene de la
+  tabla (False) o del control de yaw (True).
+- `make_attitude_controller(refs_fn, dt, roll_from_yaw)`: refs_fn da
+  [pitch, yaw, roll, dB, signo_giro].
+- `ctrl_state` nuevo: memoria 0–11, referencias usadas 12–14, moldeado
+  15–23, misión 24–39.
+- `02_simulacion.py`: `MODO = "directo" | "pitch_roll" | "rumbo"` con sus
+  tablas; la figura de control muestra la referencia usada.
+- Verificado: con el controlador provisional, modo rumbo y misión por
+  waypoints dan exactamente lo mismo que antes (0.0).
+- Guía de cómo implementar tus controladores:
+  [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5.
+
+### Bug: el controlador corría más rápido que PERIODO_CONTROL
+
+`sim.py` decidía cuándo correr el controlador con el contador de pasos
+**dentro de cada muestra guardada**, que se reinicia en cada muestra. Solo
+era correcto si `ctrl_every` divide a `decimate`. Con `DT = 0.005`,
+`MUESTREO = 0.05` y `PERIODO_CONTROL = 0.25`, el controlador corría cada
+0.05 s mientras el integrador y el moldeado suponían 0.25 s: integral 5
+veces más fuerte → **ciclo límite** en pitch (±60°, periodo ~28 s, masa
+móvil de tope a tope).
+
+- Arreglo: contador global de pasos.
+- No afecta: lazo abierto (`ctrl_every = 1`), `run_test.py`, demos y
+  misión (20 pasos por muestra con control cada 5 o 10 pasos). Verificado:
+  validación y misión dan exactamente lo mismo (0.0).
+- Ahora los comandos cambian cada 0.250 s exactos.
+- **Los resultados del modo control de la entrada (7) se obtuvieron con el
+  controlador a 0.1 s** (MUESTREO = 0.1), no a 0.25 s. Los resultados
+  corregidos están en [SIMULACION.md](SIMULACION.md).
+
+---
+
 ## 2026-10-24 (10) — Se quita disturb_xlin; error de cero equivalente
 
 Decisión del autor: quitar `disturb_xlin`, porque la masa de perturbación

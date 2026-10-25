@@ -6,21 +6,29 @@ Three modes, one architecture (all compatible with make_simulator):
                   (run_test.py unchanged -- nothing here needed), or
                   make_open_loop_controller(schedule): piecewise-constant
                   commands from a table of phases
-  SEMI-AUTOMATIC  make_attitude_controller(refs_fn):
-                  refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, turn_sign]
-                  attitude loops + reference shaping, NO state machine
+  SEMI-AUTOMATIC  make_attitude_controller(refs_fn, roll_from_yaw):
+                  refs_fn(t) -> [pitch_ref, yaw_ref, roll_ref, dB_cmd, turn_sign]
+                  attitude loops + reference shaping, NO state machine.
+                  roll_from_yaw=False: pitch and roll loops on their own
+                  (roll_ref from the table); True: yaw loop -> roll_ref
   WAYPOINT        make_waypoint_controller(mission):
                   full V2 FSM -> reference shaping -> attitude loops
 
-ATTITUDE LOOPS ARE PLACEHOLDERS (clearly working, but NOT your Simulink
-Pitch_control / Yaw_control / Roll control blocks -- send those bodies and
-they replace attitude_step verbatim).
+THE THREE LOOPS ARE PLACEHOLDERS (working, but NOT your Simulink
+Pitch_control / Roll control / Yaw_control blocks): pitch_control,
+roll_control and yaw_control below are the functions to replace. Each one
+gets N_MEM numbers of memory (integrators, previous values, filter states)
+carried between calls.
 
-ctrl_state layout (waypoint mode), all scope-able via tel["ctrl_state"]:
-  [0]     pitch PID integrator
-  [1:10]  reference pipeline states (3x3)
-  [10:24] FSM carry (see navigation.py)
-  [24:26] held GPS fix [lon_deg, lat_deg]
+ctrl_state layout, all scope-able via tel["ctrl_state"] (scope "ctrl_state:i"):
+  [0:4]    pitch memory    ([0] = placeholder pitch PID integrator)
+  [4:8]    roll memory
+  [8:12]   yaw memory
+  [12:15]  references the loops used [pitch, roll, yaw] [rad] (log only)
+  [15:24]  reference shaping states (3x3)
+  waypoint mode only:
+  [24:38]  FSM carry (see navigation.py)
+  [38:40]  held GPS fix [lon_deg, lat_deg]
 """
 import jax.numpy as jnp
 
@@ -44,17 +52,28 @@ def wrap(a):
     return jnp.arctan2(jnp.sin(a), jnp.cos(a))
 
 
-def attitude_step(x, params, refs, turn_sign, integ, dt_ctrl):
-    """PLACEHOLDER attitude cascade. refs = [pitch_ref, yaw_ref] (shaped).
-    Returns (cmds[rc, gamma, dB=0 slot], new_integ, roll_ref)."""
+# ----------------------------------------------------------------------------
+# The three loops. Each: (x, params, reference, mem, dt) -> (output, mem).
+#   x      true state (26,): x[2] z, x[3] roll, x[4] pitch, x[5] yaw,
+#          x[6:9] u v w, x[9] p, x[10] q, x[11] r   [m, rad, m/s, rad/s]
+#   mem    (N_MEM,) this loop's memory, returned updated
+#   dt     controller period [s]
+# JAX rules: use jnp (not np/math), no python `if` on values (jnp.where,
+# jnp.clip), keep everything that must persist in mem.
+# ----------------------------------------------------------------------------
+N_MEM = 4
+
+
+def pitch_control(x, params, pitch_ref, mem, dt):
+    """PLACEHOLDER pitch PID -> moving mass. Returns (rc_cmd [m], mem).
+    mem[0] = integrator."""
     th, q = x[4], x[10]
-    phi = x[3]
-    yaw = x[5]
-    # ---- pitch PID with parameter-derived gravity feedforward
+    integ = mem[0]
+    # gravity feedforward derived from the parameters
     m_tot = params.m_static + params.m_lin + params.m_rot + params.m_pist
     zg0 = (params.m_static * params.r_static[2] + params.m_lin * params.r_lin0[2]
            + params.m_rot * params.R_rot) / m_tot
-    e = th - refs[0]
+    e = th - pitch_ref
     xg_cmd = (1.0 / jnp.cos(th)) * (KP_P * e + KD_P * q + KI_P * integ
                                     - zg0 * jnp.sin(th))
     rc_cmd = m_tot * xg_cmd / params.m_lin
@@ -63,14 +82,43 @@ def attitude_step(x, params, refs, turn_sign, integ, dt_ctrl):
     # hard way: -74 deg dives with the mass railed)
     sat = jnp.abs(rc_cmd) >= params.dx_lin_max
     winding_in = sat & (e * rc_cmd > 0)
-    integ = jnp.where(winding_in, integ, integ + e * dt_ctrl)
-    # ---- yaw -> roll_ref; turn_sign = roll-to-turn sign: +1 descent,
-    #      -1 climb, 0 = no heading control
-    e_y = wrap(refs[1] - yaw)
-    roll_ref = jnp.clip(K_YAW * e_y, -ROLL_MAX, ROLL_MAX) * turn_sign
-    # ---- roll -> gamma (plant sign: gamma>0 -> phi<0, hence the minus)
+    integ = jnp.where(winding_in, integ, integ + e * dt)
+    return rc_cmd, mem.at[0].set(integ)
+
+
+def roll_control(x, params, roll_ref, mem, dt):
+    """PLACEHOLDER roll P -> rotating mass. Returns (gamma_cmd [rad], mem).
+    Plant sign: gamma > 0 -> roll < 0, hence the minus."""
+    phi = x[3]
     gamma_cmd = -K_ROLL * (roll_ref - phi)
-    return jnp.array([rc_cmd, gamma_cmd, 0.0]), integ, roll_ref
+    return gamma_cmd, mem
+
+
+def yaw_control(x, params, yaw_ref, turn_sign, mem, dt):
+    """PLACEHOLDER heading P -> roll reference. Returns (roll_ref [rad], mem).
+    turn_sign = roll-to-turn sign: +1 descent, -1 climb, 0 = no heading
+    control."""
+    e_y = wrap(yaw_ref - x[5])
+    roll_ref = jnp.clip(K_YAW * e_y, -ROLL_MAX, ROLL_MAX) * turn_sign
+    return roll_ref, mem
+
+
+def attitude_step(x, params, shaped, turn_sign, mem, dt, roll_from_yaw=True):
+    """Wires the three loops. shaped = [pitch_ref, yaw_ref, roll_ref] after
+    reference shaping; mem (3*N_MEM,) = [pitch | roll | yaw].
+    roll_from_yaw (python bool, fixed when the controller is built): the
+    roll reference comes from the yaw loop (True) or from shaped[2] (False).
+    Returns (cmds [rc, gamma, 0 = dB slot], mem, used refs [pitch, roll, yaw])."""
+    mp, mr, my = mem[0:N_MEM], mem[N_MEM:2 * N_MEM], mem[2 * N_MEM:3 * N_MEM]
+    rc_cmd, mp = pitch_control(x, params, shaped[0], mp, dt)
+    if roll_from_yaw:
+        roll_ref, my = yaw_control(x, params, shaped[1], turn_sign, my, dt)
+    else:
+        roll_ref = shaped[2]
+    gamma_cmd, mr = roll_control(x, params, roll_ref, mr, dt)
+    used = jnp.array([shaped[0], roll_ref, shaped[1]])
+    return (jnp.array([rc_cmd, gamma_cmd, 0.0]),
+            jnp.concatenate([mp, mr, my]), used)
 
 
 def piecewise_schedule(schedule):
@@ -102,25 +150,30 @@ def make_open_loop_controller(schedule):
     return jnp.zeros(1), controller
 
 
-def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None,
-                             init_refs=(0.0, 0.0)):
-    """SEMI-AUTOMATIC mode. refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, turn_sign]
-    (dB_cmd in PHYSICAL VBD convention: negative = dive).
-    init_refs = (pitch, yaw) [rad] where the shaped references start (use
-    the initial attitude; default 0 ramps from 0)."""
+def make_attitude_controller(refs_fn, dt_ctrl, roll_from_yaw=True,
+                             ref_pipeline_kwargs=None, init_refs=(0.0, 0.0, 0.0)):
+    """SEMI-AUTOMATIC mode.
+    refs_fn(t) -> [pitch_ref, yaw_ref, roll_ref, dB_cmd, turn_sign]
+    (dB_cmd in PHYSICAL VBD convention: negative = dive). roll_from_yaw:
+    see attitude_step (False: roll_ref is used, yaw_ref and turn_sign are
+    ignored; True: the other way around).
+    init_refs = (pitch, yaw, roll) [rad] where the shaped references start
+    (use the initial attitude; 0 ramps from 0)."""
     kw = dict(ref_pipeline_kwargs or {})
-    kw.setdefault("init", (init_refs[0], init_refs[1], 0.0))
+    kw.setdefault("init", tuple(init_refs))
     ref0, ref_step = make_ref_pipeline(dt_ctrl, **kw)
+    n = 3 * N_MEM
 
     def controller(t, x, cs, params):
-        integ, ref_s = cs[0], cs[1:10].reshape(3, 3)
+        mem, ref_s = cs[0:n], cs[n + 3:n + 12].reshape(3, 3)
         raw = refs_fn(t)
-        ref_s, shaped = ref_step(ref_s, jnp.array([raw[0], raw[1], 0.0]))
-        cmds, integ, _ = attitude_step(x, params, shaped, raw[3], integ, dt_ctrl)
-        cmds = cmds.at[2].set(raw[2])
-        return cmds, jnp.concatenate([jnp.array([integ]), ref_s.ravel()])
+        ref_s, shaped = ref_step(ref_s, jnp.array([raw[0], raw[1], raw[2]]))
+        cmds, mem, used = attitude_step(x, params, shaped, raw[4], mem,
+                                        dt_ctrl, roll_from_yaw)
+        cmds = cmds.at[2].set(raw[3])
+        return cmds, jnp.concatenate([mem, used, ref_s.ravel()])
 
-    return jnp.concatenate([jnp.zeros(1), ref0.ravel()]), controller
+    return jnp.concatenate([jnp.zeros(n + 3), ref0.ravel()]), controller
 
 
 def make_waypoint_controller(mission, dt_ctrl, ref_pipeline_kwargs=None):
@@ -132,23 +185,25 @@ def make_waypoint_controller(mission, dt_ctrl, ref_pipeline_kwargs=None):
     fsm0, ecef0, fsm_step = build_fsm(mission)
     origin_deg = jnp.array([mission[0][0], mission[0][1]])
 
+    n = 3 * N_MEM
+
     def controller(t, x, cs, params):
-        integ = cs[0]
-        ref_s = cs[1:10].reshape(3, 3)
-        fsm_c = cs[10:24]
-        held = cs[24:26]
+        mem = cs[0:n]
+        ref_s = cs[n + 3:n + 12].reshape(3, 3)
+        fsm_c = cs[n + 12:n + 26]
+        held = cs[n + 26:n + 28]
         depth = x[2]
         # GPS (gated on surfacing; holds last fix underwater)
         fix = gps_fix(params, x[23:26], depth, held)
         # FSM tick
         fsm_c, o = fsm_step(fsm_c, fix, depth, x[5], t)
-        # reference shaping (pitch & yaw; roll shaped downstream of yaw loop)
+        # reference shaping (pitch & yaw; roll_ref comes from the yaw loop)
         ref_s, shaped = ref_step(ref_s, jnp.array([o[0], o[1], 0.0]))
-        cmds, integ, roll_ref = attitude_step(x, params, shaped, o[3],
-                                              integ, dt_ctrl)
+        cmds, mem, used = attitude_step(x, params, shaped, o[3], mem, dt_ctrl,
+                                        roll_from_yaw=True)
         cmds = cmds.at[2].set(BUOY_SIGN * o[2])
-        cs = jnp.concatenate([jnp.array([integ]), ref_s.ravel(), fsm_c, fix])
+        cs = jnp.concatenate([mem, used, ref_s.ravel(), fsm_c, fix])
         return cmds, cs
 
-    cs0 = jnp.concatenate([jnp.zeros(1), jnp.zeros(9), fsm0, origin_deg])
+    cs0 = jnp.concatenate([jnp.zeros(n + 3), ref0.ravel(), fsm0, origin_deg])
     return cs0, controller, ecef0

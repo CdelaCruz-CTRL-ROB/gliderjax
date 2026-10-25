@@ -32,7 +32,7 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
       params.py                         estructura de parámetros y switches; lee config/*.toml
       dynamics.py                       ecuaciones de movimiento e hidrodinámica
       sim.py                            solvers (ode1, ode2, ode4), actuadores, simulador
-      autopilot.py                      controladores de actitud (PROVISIONALES)
+      autopilot.py                      controladores: un lazo por función (PROVISIONALES)
       navigation.py                     FSM de waypoints (V2) y GPS
       geodesy.py                        conversiones lat/lon <-> ECEF <-> NED
       scope.py                          gráficas tipo "scope" de Simulink
@@ -63,7 +63,7 @@ gráficas) y llaman a la simulación.
 | masa de perturbación y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
 | perfil, solver, paso, duración, condiciones iniciales, actuadores | el script (`02_simulacion.py`, secciones 1 a 4) |
-| ganancias de los controladores (provisionales) | `gliderjax/autopilot.py`, líneas 32-37 |
+| controladores (provisionales): ganancias y funciones `pitch_control`, `roll_control`, `yaw_control` | `gliderjax/autopilot.py` (guía en [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5) |
 | constantes de la FSM de waypoints | `gliderjax/navigation.py`, líneas 20-36 |
 | ecuaciones del modelo | `gliderjax/dynamics.py` (mapa en [MODELO.md](MODELO.md)) |
 

@@ -71,11 +71,12 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 | | `VELOCIDAD_MARCO`, `VELOCIDAD` | `"cuerpo"`: (u, v, w) relativa al agua; `"inercial"`: (vN, vE, vD) respecto al fondo (se le resta la corriente) |
 | | `VEL_ANGULAR_DEG` | p, q, r [°/s] |
 | | `ORIGEN_GEO` | lon, lat [°]; solo si el perfil usa geodesia |
-| 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"control"`: la tabla da referencias y los controladores (provisionales) mueven rc y γ |
+| 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"pitch_roll"`: referencias de pitch y roll, cada controlador por su lado; `"rumbo"`: referencias de pitch y rumbo, el control de yaw da la referencia de roll |
 | | `FASES` | modo directo: (t_inicio, rc [m], γ [°], dB [N], nombre); una fila = constante |
-| | `FASES_CONTROL` | modo control: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro, nombre). signo_giro: +1 bajando, −1 subiendo, 0 sin control de rumbo |
-| | `PERIODO_CONTROL` | cada cuánto corre el controlador [s], múltiplo de `DT` |
-| | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (modo control: rc = 0, γ = 0 y el dB de la primera fila); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
+| | `FASES_PITCH_ROLL` | modo pitch_roll: (t_inicio, pitch_ref [°], roll_ref [°], dB [N], nombre) |
+| | `FASES_RUMBO` | modo rumbo: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro, nombre). signo_giro: +1 bajando, −1 subiendo, 0 sin control de rumbo |
+| | `PERIODO_CONTROL` | cada cuánto corren los controladores [s], múltiplo de `DT` |
+| | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (modos con control: rc = 0, γ = 0 y el dB de la primera fila); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
 | 5 Salida | `FIGURAS` | lista de figuras (comentar las que no quieras) |
 | | `COMPARAR_CON_ANTERIOR` | superponer con la corrida anterior |
 | | `ALFA_VALIDO_DEG` | aviso si \|α\| pasa de esto |
@@ -103,26 +104,35 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 6. Resumen por fase y estado final.
 7. Figuras, más `00_vs_anterior.png` con las dos corridas superpuestas.
 
-### Modo control
+### Modos con control
 
-Usa los controladores **provisionales** de `autopilot.py` (no tus bloques
-de Simulink): PID de pitch → rc, P de rumbo → roll de referencia (× signo de giro),
-P de roll → γ. Las referencias pasan por el moldeado de Simulink (pitch
-±0.1 rad/s y 1/(5s+1); rumbo ±0.03 rad/s y 1/(5s+1)), que arranca en la
-actitud inicial. El dB va directo al VBD.
+Usan los controladores **provisionales** de `autopilot.py` (no tus bloques
+de Simulink): PID de pitch → rc, P de roll → γ, y en modo `"rumbo"` P de
+rumbo → roll de referencia (× signo de giro). Las referencias pasan por el
+moldeado de Simulink (pitch ±0.1 rad/s y 1/(5s+1); rumbo ±0.03 rad/s y
+1/(5s+1); roll sin moldeado), que arranca en la actitud inicial. El dB va
+directo al VBD. Cómo poner tus controladores:
+[CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5.
 
-Agrega la figura `09_control.png`: pitch y rumbo contra la referencia de
-la tabla (sin moldear), roll, y rc y γ (comando y posición).
+Agrega la figura `09_control.png`: pitch, roll y rumbo contra la
+referencia **usada** por el controlador (después del moldeado; en modo
+rumbo, la de roll es la que calculó el control de yaw) y contra la de la
+tabla; rc y γ (comando y posición).
 
-Prueba (2026-10-24): bajada con pitch_ref −25°, dB −3 N, y en t = 200 s
-rumbo_ref de 0° a 45°:
+Pruebas (2026-10-24, controlador a 0.25 s ya corregido, ver bitácora
+entrada 11), arrancando del reposo a 200 m con actuadores en neutro:
 
-- pitch llega a −25.0° (error < 0.01° en estacionario);
-- el rumbo llega a 45° hacia t = 260 s, con roll de hasta +17°
-  (γ ≈ −18°);
-- al meter el roll, el planeador primero gira ~3° **al lado contrario**
-  durante ~10 s y luego gira hacia la referencia;
-- con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
+- **`pitch_roll`**, pitch_ref −25°, roll_ref 0° → 15° en t = 200 s:
+  - pitch sobrepasa a −32° y se asienta en −25.000°;
+  - roll se queda en **9.5°** con referencia 15°: error en estado
+    estacionario del P provisional (sin integral);
+  - con roll sostenido el planeador gira (+0.69 °/s).
+- **`rumbo`**, rumbo_ref 0° → 45° en t = 200 s:
+  - el rumbo pasa de 44° en t = 264 s y se queda en 45.0°; roll máximo
+    16.8°;
+  - al meter el roll, primero gira 1.3° al lado contrario;
+  - pitch se mantiene entre −26.0° y −24.4° durante el giro.
+- Con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
   (sin giro falso).
 
 ### Paso de integración

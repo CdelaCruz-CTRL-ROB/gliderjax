@@ -152,20 +152,24 @@ def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
     step = SOLVERS[solver]
 
     def inner_step(i, carry, p):
-        x, cs, cmds, t = carry
-        run_ctrl = (i % ctrl_every) == 0
+        x, cs, cmds, t, k = carry
+        # k = global step count: the controller runs every ctrl_every steps
+        # of the whole simulation, independent of decimate (the frame index
+        # i restarts every frame and gave the wrong rate when ctrl_every did
+        # not divide decimate)
+        run_ctrl = (k % ctrl_every) == 0
         new_cmds, new_cs = controller(t, x, cs, p)
         cmds = jnp.where(run_ctrl, new_cmds, cmds)
         cs = jax.tree_util.tree_map(
             lambda a, b: jnp.where(run_ctrl, a, b), new_cs, cs)
         x = move_actuators(x, cmds, dt, p)
         x = step(x, dt, p, cfg)
-        return (x, cs, cmds, t + dt)
+        return (x, cs, cmds, t + dt, k + 1)
 
     def frame(carry, _, p):
         carry = jax.lax.fori_loop(
             0, decimate, lambda i, c: inner_step(i, c, p), carry)
-        x, cs, cmds, t = carry
+        x, cs, cmds, t, _ = carry
         _, tel = dynamics(x, p, cfg)          # one diagnostic eval per frame
         tel = dict(tel)
         tel["t"] = t
@@ -179,7 +183,7 @@ def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
     @functools.partial(jax.jit, static_argnums=(2,))
     def simulate(p: GliderParams, x0: jnp.ndarray, n_frames: int):
         cmds0, _ = controller(0.0, x0, ctrl_state0, p)
-        carry0 = (x0, ctrl_state0, cmds0, 0.0)
+        carry0 = (x0, ctrl_state0, cmds0, 0.0, jnp.asarray(0))
         _, tel = jax.lax.scan(
             lambda c, _: frame(c, _, p), carry0, None, length=n_frames)
         return tel

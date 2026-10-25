@@ -40,14 +40,14 @@ MODELO = "simulink"   # perfil [modelo.<nombre>]: "simulink" | "completo"
 SOLVER = "ode4"       # "ode4" Runge-Kutta 4 | "ode2" Heun | "ode1" Euler
 #                       (paso fijo, mismos nombres que en Simulink)
 DT = 0.005            # [s] paso de integración
-T_FINAL = 600.0       # [s] duración
-MUESTREO = 0.1        # [s] cada cuánto se guarda una muestra (múltiplo de DT)
+T_FINAL = 60.0       # [s] duración
+MUESTREO = 0.05        # [s] cada cuánto se guarda una muestra (múltiplo de DT)
 
 # =============================================================================
 # 3) CONDICIONES INICIALES
 # =============================================================================
 # --- en el marco inercial (NED: x norte, y este, z abajo) ---
-POSICION = (0.0, 0.0, 50.0)          # [m]   x, y, z (profundidad)
+POSICION = (0.0, 0.0, 200.0)          # [m]   x, y, z (profundidad)
 ACTITUD_DEG = (0.0, 0.0, 0.0)        # [deg] roll, pitch, yaw
 # --- velocidad lineal: en el cuerpo o en el inercial ---
 VELOCIDAD_MARCO = "cuerpo"           # "cuerpo":   (u, v, w) relativa al agua
@@ -61,11 +61,15 @@ ORIGEN_GEO = (-95.72275, 19.37214)   # [deg] lon, lat
 # =============================================================================
 # 4) ACTUADORES: directo o con control
 # =============================================================================
-MODO = "directo"      # "directo": la tabla FASES da la posición de los actuadores
-#                       "control": la tabla FASES_CONTROL da referencias y los
-#                       controladores mueven rc y gamma (PROVISIONALES:
-#                       PID de pitch, P de rumbo -> roll, P de roll;
-#                       ganancias en gliderjax/autopilot.py)
+MODO = "directo"      # "directo":    tabla FASES -> posición de los actuadores
+#                       "pitch_roll": tabla FASES_PITCH_ROLL -> referencias de
+#                                     pitch y de roll; cada controlador por su
+#                                     lado (pitch -> rc, roll -> gamma)
+#                       "rumbo":      tabla FASES_RUMBO -> referencias de pitch
+#                                     y de rumbo; el control de yaw da la
+#                                     referencia de roll al control de roll
+#                       Controladores PROVISIONALES en gliderjax/autopilot.py:
+#                       pitch_control, roll_control, yaw_control
 
 # --- modo "directo": tabla de fases; una sola fila = constante ---
 #      rc    [m]    masa móvil (+ = adelante -> nariz abajo; satura en ±0.10)
@@ -73,21 +77,31 @@ MODO = "directo"      # "directo": la tabla FASES da la posición de los actuado
 #      dB    [N]    VBD (+ = sube; satura en ±4.93 con rho = 1000)
 FASES = [
     # t_inicio   rc      gamma    dB      nombre
-    (0.0,        0.03,    0.0,   -3.0,   "bajada"),
+    (0.0,        0.02,    0.0,   -3,   "bajada"),
 ]
 
-# --- modo "control": referencias ---
+# --- modo "pitch_roll": referencias de pitch y roll ---
+#      pitch_ref [deg] (+ = nariz arriba), roll_ref [deg] (+ = ala derecha
+#      abajo), dB [N] (va directo al VBD)
+FASES_PITCH_ROLL = [
+    # t_inicio   pitch    roll     dB     nombre
+    (0.0,        -25.0,    0.0,   -3.0,  "bajada"),
+    (200.0,      -25.0,   15.0,   -3.0,  "bajada con roll"),
+]
+
+# --- modo "rumbo": referencias de pitch y rumbo ---
 #      pitch_ref [deg], rumbo_ref [deg] (yaw), dB [N] (va directo al VBD)
 #      signo_giro: relación roll-giro: +1 bajando, -1 subiendo, 0 = sin
 #          control de rumbo (roll de referencia 0)
-FASES_CONTROL = [
+FASES_RUMBO = [
     # t_inicio   pitch   rumbo    dB   signo_giro  nombre
     (0.0,        -25.0,   0.0,   -3.0,   +1,   "bajada"),
 ]
-PERIODO_CONTROL = 0.25  # [s] cada cuánto corre el controlador (múltiplo de DT)
 
-ACTUADORES_INICIO = "en_posicion"    # "en_posicion": arrancan ya en la 1a fila
-#                                      (modo control: rc = 0, gamma = 0, dB)
+PERIODO_CONTROL = 0.25  # [s] cada cuánto corren los controladores (múltiplo de DT)
+
+ACTUADORES_INICIO = "neutro"    # "en_posicion": arrancan ya en la 1a fila
+#                                      (modos con control: rc = 0, gamma = 0, dB)
 #                                      "neutro": arrancan en 0 y se mueven
 #                                      con su dinámica (rate limit, FT)
 
@@ -97,14 +111,14 @@ ACTUADORES_INICIO = "en_posicion"    # "en_posicion": arrancan ya en la 1a fila
 FIGURAS = [            # comentar las que no quieras
     "resumen",          # profundidad, actitud, vista superior, V, dz/dt
     "actuadores",       # posición vs comando, flotabilidad neta
-    "velocidades",      # u v w p q r, alpha, beta
-    "fuerzas_flujo",    # D, SF, L, T1, T2, T3 (= fcn_damping)
-    "balance_pitch",    # términos del momento de pitch y su suma
-    "balance_roll",
-    "balance_yaw",
-    "trayectoria_3d",
+   # "velocidades",      # u v w p q r, alpha, beta
+   # "fuerzas_flujo",    # D, SF, L, T1, T2, T3 (= fcn_damping)
+   # "balance_pitch",    # términos del momento de pitch y su suma
+   # "balance_roll",
+   # "balance_yaw",
+   # "trayectoria_3d",
 ]
-COMPARAR_CON_ANTERIOR = True   # superponer con la corrida anterior
+COMPARAR_CON_ANTERIOR = False   # superponer con la corrida anterior
 ALFA_VALIDO_DEG = 15.0         # aviso si |alpha| pasa de esto (modelo alfa-beta)
 MOSTRAR = True                 # abrir las figuras al final (zoom, pan)
 
@@ -122,8 +136,10 @@ entradas = dict(CONFIG=os.path.relpath(CONFIG, RAIZ), MODELO=MODELO,
                 VELOCIDAD_MARCO=VELOCIDAD_MARCO, VELOCIDAD=VELOCIDAD,
                 VEL_ANGULAR_DEG=VEL_ANGULAR_DEG, MODO=MODO,
                 ACTUADORES_INICIO=ACTUADORES_INICIO)
-if MODO == "control":
-    entradas.update(FASES_CONTROL=FASES_CONTROL, PERIODO_CONTROL=PERIODO_CONTROL)
+if MODO == "pitch_roll":
+    entradas.update(FASES_PITCH_ROLL=FASES_PITCH_ROLL, PERIODO_CONTROL=PERIODO_CONTROL)
+elif MODO == "rumbo":
+    entradas.update(FASES_RUMBO=FASES_RUMBO, PERIODO_CONTROL=PERIODO_CONTROL)
 else:
     entradas.update(FASES=FASES)
 entradas = json.loads(json.dumps(entradas))        # tuplas -> listas
@@ -140,10 +156,10 @@ if ACTUADORES_INICIO not in ("en_posicion", "neutro"):
 marco = {"cuerpo": "body", "inercial": "ned"}.get(VELOCIDAD_MARCO)
 if marco is None:
     sys.exit("VELOCIDAD_MARCO debe ser 'cuerpo' o 'inercial'")
-if MODO not in ("directo", "control"):
-    sys.exit("MODO debe ser 'directo' o 'control'")
+if MODO not in ("directo", "pitch_roll", "rumbo"):
+    sys.exit("MODO debe ser 'directo', 'pitch_roll' o 'rumbo'")
 ctrl_every = 1
-if MODO == "control":
+if MODO != "directo":
     ctrl_every = int(round(PERIODO_CONTROL / DT))
     if ctrl_every < 1 or abs(ctrl_every * DT - PERIODO_CONTROL) > 1e-9:
         sys.exit(f"PERIODO_CONTROL ({PERIODO_CONTROL}) debe ser múltiplo de DT ({DT})")
@@ -156,13 +172,21 @@ if MODO == "directo":
     act0 = tabla[0][1:]
     fases = [(f[0], f[4]) for f in FASES]
 else:
-    refs = piecewise_schedule(
-        [(t0, np.deg2rad(th), np.deg2rad(ps), dB, sg)
-         for t0, th, ps, dB, sg, _ in FASES_CONTROL])
+    # tabla de referencias del controlador: [pitch, yaw, roll, dB, signo_giro]
+    if MODO == "pitch_roll":
+        tabla_ref = [(t0, np.deg2rad(th), 0.0, np.deg2rad(ph), dB, 0.0)
+                     for t0, th, ph, dB, _ in FASES_PITCH_ROLL]
+        fases = [(f[0], f[4]) for f in FASES_PITCH_ROLL]
+    else:
+        tabla_ref = [(t0, np.deg2rad(th), np.deg2rad(ps), 0.0, dB, sg)
+                     for t0, th, ps, dB, sg, _ in FASES_RUMBO]
+        fases = [(f[0], f[5]) for f in FASES_RUMBO]
+    refs = piecewise_schedule(tabla_ref)
+    roll0, pitch0, yaw0 = np.deg2rad(ACTITUD_DEG)
     cs0, ctrl = make_attitude_controller(
-        refs, PERIODO_CONTROL, init_refs=np.deg2rad(ACTITUD_DEG[1:3]))
-    act0 = (0.0, 0.0, FASES_CONTROL[0][3])
-    fases = [(f[0], f[5]) for f in FASES_CONTROL]
+        refs, PERIODO_CONTROL, roll_from_yaw=(MODO == "rumbo"),
+        init_refs=(pitch0, yaw0, roll0))
+    act0 = (0.0, 0.0, tabla_ref[0][4])
 ecef0 = None
 if cfg.use_geodesy:
     from gliderjax.geodesy import lla2ecef, R_n_e
@@ -286,18 +310,30 @@ graficas = {
 
 
 def figura_control():
-    """Modo control: actitud contra la referencia de la tabla (sin moldear;
-    el controlador ve la referencia ya moldeada: rate limit + 1/(5s+1))."""
-    ref = np.array([np.asarray(refs(ti)) for ti in t])
+    """Modos con control: actitud contra la referencia. "tabla" = valor de
+    la tabla de fases; "usada" = lo que recibió el controlador (después del
+    moldeado: rate limit + 1/(5s+1) en pitch y rumbo; en modo rumbo, la
+    referencia de roll es la que calculó el control de yaw)."""
+    tab = np.asarray(tabla_ref, dtype=float)
+    i = np.clip(np.searchsorted(tab[:, 0], t + 1e-6, side="right") - 1,
+                0, len(tab) - 1)
+    ref = tab[i, 1:]                                # [pitch, yaw, roll, dB, sg]
+    usada = tel["ctrl_state"][:, 12:15]             # [pitch, roll, yaw]
     f, ax = plt.subplots(5, 1, figsize=(10, 11), sharex=True)
     ax[0].plot(t, np.rad2deg(tel["eta"][:, 4]), label="pitch")
-    ax[0].plot(t, np.rad2deg(ref[:, 0]), "--", label="referencia")
+    ax[0].plot(t, np.rad2deg(usada[:, 0]), label="referencia usada")
+    ax[0].plot(t, np.rad2deg(ref[:, 0]), "--", label="tabla")
     ax[0].set_ylabel("pitch [deg]")
-    ax[1].plot(t, np.rad2deg(np.unwrap(tel["eta"][:, 5])), label="rumbo")
-    ax[1].plot(t, np.rad2deg(ref[:, 1]), "--", label="referencia")
-    ax[1].set_ylabel("rumbo [deg]")
-    ax[2].plot(t, np.rad2deg(tel["eta"][:, 3]))
-    ax[2].set_ylabel("roll [deg]")
+    ax[1].plot(t, np.rad2deg(tel["eta"][:, 3]), label="roll")
+    ax[1].plot(t, np.rad2deg(usada[:, 1]), label="referencia usada")
+    if MODO == "pitch_roll":
+        ax[1].plot(t, np.rad2deg(ref[:, 2]), "--", label="tabla")
+    ax[1].set_ylabel("roll [deg]")
+    ax[2].plot(t, np.rad2deg(np.unwrap(tel["eta"][:, 5])), label="rumbo")
+    if MODO == "rumbo":
+        ax[2].plot(t, np.rad2deg(usada[:, 2]), label="referencia usada")
+        ax[2].plot(t, np.rad2deg(ref[:, 1]), "--", label="tabla")
+    ax[2].set_ylabel("rumbo [deg]")
     ax[3].plot(t, tel["cmds"][:, 0] * 1000, "--", label="comando")
     ax[3].plot(t, tel["actuators"][:, 0] * 1000, label="posición")
     ax[3].set_ylabel("rc [mm]")
@@ -308,14 +344,14 @@ def figura_control():
     for a in ax:
         a.grid(alpha=0.3)
         a.legend(loc="upper right", fontsize=8) if a.get_legend_handles_labels()[0] else None
-    f.suptitle("Control (PROVISIONAL): referencia vs respuesta")
+    f.suptitle(f"Control modo '{MODO}' (PROVISIONAL): referencia vs respuesta")
     f.tight_layout()
     f.savefig(fig("09_control.png"), dpi=120)
     if not MOSTRAR:
         plt.close(f)
 
 
-if MODO == "control":
+if MODO != "directo":
     graficas["control"] = figura_control
     FIGURAS = ["control"] + list(FIGURAS)
 for nombre in FIGURAS:

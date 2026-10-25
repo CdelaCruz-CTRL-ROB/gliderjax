@@ -13,17 +13,19 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 - FSM: `navigation.py::build_fsm` (port "literal" de tu V2, según el port).
 - Moldeado de referencias: `sim.py::make_ref_pipeline`. Valores de Simulink:
   pitch ±0.1 rad/s → 1/(5s+1); yaw ±0.03 rad/s → 1/(5s+1); roll sin moldeado.
-- Controladores: `autopilot.py::attitude_step`.
+- Controladores: `autopilot.py::pitch_control`, `roll_control`,
+  `yaw_control`; los conecta `attitude_step` (sección 5).
 - Todo junto: `autopilot.py::make_waypoint_controller`.
 - Sin FSM ni controladores (lazo abierto, tabla de fases):
   `autopilot.py::make_open_loop_controller`, usado en
   `escenarios/01_validacion_dinamica.py` (ver [VALIDACION.md](VALIDACION.md))
   y en `02_simulacion.py` con `MODO = "directo"`.
-- Controladores sin FSM (tabla de referencias de pitch, rumbo, dB y signo de giro):
-  `autopilot.py::make_attitude_controller`, usado en `02_simulacion.py` con
-  `MODO = "control"` (ver [SIMULACION.md](SIMULACION.md)). El moldeado de
-  referencias arranca en la actitud inicial (`init_refs`), para que no haya
-  un giro falso si el rumbo inicial no es 0.
+- Controladores sin FSM: `autopilot.py::make_attitude_controller`, usado
+  en `02_simulacion.py` con `MODO = "pitch_roll"` (pitch y roll cada uno
+  por su lado, referencias de una tabla) o `MODO = "rumbo"` (el control de
+  yaw da la referencia de roll). Ver [SIMULACION.md](SIMULACION.md). El
+  moldeado de referencias arranca en la actitud inicial (`init_refs`), para
+  que no haya un giro falso si el rumbo inicial no es 0.
 - Hay **dos prefiltros distintos**: los de los actuadores (`[actuadores]`
   del archivo de configuración, verificados) y el moldeado de las
   referencias de control (`sim.py::make_ref_pipeline`, valores en el
@@ -37,7 +39,7 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 **No son tus bloques `Pitch_control`, `Yaw_control` ni `Roll control` de
 Simulink.** La sesión anterior los puso para que la misión pudiera volar
 mientras llegaban los tuyos. Ganancias: constantes al inicio de
-`autopilot.py` (líneas 32-37).
+`autopilot.py` (líneas 41-45). Cada lazo es una función (sección 5).
 
 **Pitch: PID** (`KP_P = 0.015`, `KD_P = 0.08`, `KI_P = 0.003`)
 
@@ -148,3 +150,74 @@ SURF 922 s → FIX 932 s → … → DONE 1854 s.
    actuador y dar siempre el pitch explícitamente para cada inmersión.
    Pendiente para el script de waypoints: pitch de bajada y de subida por
    inmersión (o por waypoint) como dato de la misión.
+
+## 5. Cómo implementar tu controlador
+
+Todo está en `gliderjax/autopilot.py`. Hay **una función por lazo**; para
+poner tu control, reemplazas el cuerpo de la que corresponda:
+
+| Función | Línea | Recibe | Devuelve |
+|---|---|---|---|
+| `pitch_control(x, params, pitch_ref, mem, dt)` | 67 | referencia de pitch [rad] | `rc_cmd` [m] |
+| `roll_control(x, params, roll_ref, mem, dt)` | 89 | referencia de roll [rad] | `gamma_cmd` [rad] |
+| `yaw_control(x, params, yaw_ref, turn_sign, mem, dt)` | 97 | referencia de rumbo [rad] y signo de giro | `roll_ref` [rad] |
+
+Las tres devuelven además `mem` actualizada. `attitude_step` (línea 106)
+las conecta; no hace falta tocarla.
+
+**Entradas comunes:**
+
+| | Contenido |
+|---|---|
+| `x` | estado verdadero (26): `x[2]` z, `x[3]` φ, `x[4]` θ, `x[5]` ψ, `x[6:9]` u, v, w, `x[9]` p, `x[10]` q, `x[11]` r [m, rad, m/s, rad/s] |
+| `params` | todo lo del archivo de configuración (`params.m_lin`, `params.r_lin0`, ...) |
+| `mem` | la **memoria** de ese lazo: `N_MEM = 4` números que se guardan entre llamadas (integradores, valor anterior para una derivada, estado de un filtro). Empieza en 0 |
+| `dt` | periodo del controlador [s] (`PERIODO_CONTROL`) |
+
+Las referencias llegan **ya moldeadas**: pitch ±0.1 rad/s → 1/(5s+1);
+rumbo ±0.03 rad/s → 1/(5s+1); roll sin moldeado.
+
+**Cómo corren:** cada `PERIODO_CONTROL`; el comando se mantiene entre
+ejecuciones (ZOH) y luego pasa por las cadenas de los actuadores y sus
+saturaciones (rc ±0.10 m, γ ±90°). El anti-windup es responsabilidad del
+controlador.
+
+**Modos de prueba** (`02_simulacion.py`):
+
+| `MODO` | Qué lazos corren | Tabla |
+|---|---|---|
+| `"pitch_roll"` | pitch y roll, cada uno con su referencia; el de yaw no corre | `FASES_PITCH_ROLL`: t, pitch_ref [°], roll_ref [°], dB [N] |
+| `"rumbo"` | pitch; yaw → roll_ref → roll | `FASES_RUMBO`: t, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro |
+
+Plan sugerido: sintonizar pitch y roll con `"pitch_roll"`, luego el de
+yaw con `"rumbo"`.
+
+**Reglas de JAX** (la función se compila):
+
+1. Sin `if` de Python con valores del estado: `jnp.where(cond, a, b)`;
+   para saturar, `jnp.clip(u, -lim, lim)`.
+2. Usa `jnp` (`jnp.sin`, `jnp.abs`, ...), no `np` ni `math`.
+3. Lo que deba recordarse va en `mem` (`mem.at[0].set(valor)` devuelve una
+   copia modificada); nada en variables globales.
+4. `print` no funciona adentro: usa `jax.debug.print("e = {}", e)`, o
+   grafica la memoria desde la telemetría (abajo).
+
+**Signos:** rc > 0 baja la nariz; γ > 0 da roll negativo (ala izquierda
+abajo); θ > 0 nariz arriba; φ > 0 ala derecha abajo; ψ rumbo NED (0 =
+norte, + hacia el este).
+
+**Memoria y referencias en la telemetría** (`tel["ctrl_state"]`, o
+`scope.scope(tel, ["ctrl_state:12"])`):
+
+| Índices | Contenido |
+|---|---|
+| 0–3 | memoria de pitch (0 = integrador del PID provisional) |
+| 4–7 | memoria de roll |
+| 8–11 | memoria de yaw |
+| 12, 13, 14 | referencias que usaron los lazos: pitch, roll, yaw [rad] |
+| 15–23 | estados del moldeado de referencias |
+| 24–39 | solo misión: FSM y último fix GPS |
+
+**Para no perder el provisional:** está en git (`git diff
+gliderjax/autopilot.py` muestra tus cambios; `git show
+HEAD:gliderjax/autopilot.py` la versión guardada).
