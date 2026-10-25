@@ -51,7 +51,7 @@ DURACION = "mision"   # "mision": corre hasta que la FSM termina (DONE) y
 #                                 T_MAX se detiene y avisa TIMEOUT
 #                       "tiempo": corre T_FINAL y se corta, terminen o no
 #                                 los waypoints
-T_MAX = 20000.0       # [s] timeout del modo "mision"
+T_MAX = 60000.0       # [s] timeout del modo "mision"
 T_DESPUES_DONE = 20.0  # [s] (en Simulink, el bloque stop corta 20 s después)
 T_FINAL = 3000.0      # [s] duración del modo "tiempo"
 
@@ -71,8 +71,8 @@ WAYPOINTS = [
     (-95.72275,    19.37214),     # WP0: origen (19°22'19.7"N, 95°43'21.9"W)
 
     # --- triángulo (el de Simulink) ---
-    (-95.72011,    19.37464),     # WP1 (19°22'28.7"N, 95°43'12.4"W)
-    (-95.72275,    19.37714),     # WP2 (19°22'37.7"N, 95°43'21.9"W)
+ #   (-95.72011,    19.37464),     # WP1 (19°22'28.7"N, 95°43'12.4"W)
+ #   (-95.72275,    19.37714),     # WP2 (19°22'37.7"N, 95°43'21.9"W)
     # --- ... y para el cuadro de 7 puntos, además: ---
     # (-95.71798,    19.37714),   # WP3 (~500 m al este del WP2)
     # (-95.71798,    19.37264),   # WP4 (~500 m al sur del WP3)
@@ -83,10 +83,10 @@ WAYPOINTS = [
     # (-95.72275,    19.37885),
 
     # --- cuadro de 3 km ---
-    # (-95.72275,    19.40014),   # WP A: 3 km al norte del origen
-    # (-95.69412,    19.40014),   # WP B: 3 km al este del WP A
-    # (-95.69412,    19.37214),   # WP C: 3 km al sur del WP B
-    # (-95.70844,    19.38614),   # WP D: centro del cuadro (fin)
+     (-95.72275,    19.40014),   # WP A: 3 km al norte del origen
+     (-95.69412,    19.40014),   # WP B: 3 km al este del WP A
+     (-95.69412,    19.37214),   # WP C: 3 km al sur del WP B
+     (-95.70844,    19.38614),   # WP D: centro del cuadro (fin)
 
     # --- barrido (lawnmower) ---
     # (-95.72275,    19.39014),   # WP A: 2 km al norte

@@ -110,6 +110,26 @@ Se construye paso a paso. Cada cambio al código o hallazgo se registra en
 [BITACORA.md](BITACORA.md) con fecha, y se actualiza el documento que
 corresponda.
 
+### Instalar en otra computadora (GitHub)
+
+El repositorio está en GitHub (privado). Ahí va solo la carpeta
+`gliderjax/`: el venv, `_old/` y `sim/simulink/` no se suben. Lo importante
+de `sim/simulink/` ya está copiado en `docs/referencia_simulink/`. Para
+reproducir la misma estructura (venv en `sim/`, proyecto en
+`sim/gliderjax/`) con Python 3.11+ y Git instalados:
+
+```
+python -m venv sim
+cd sim
+git clone https://github.com/USUARIO/REPOSITORIO.git gliderjax
+cd gliderjax
+..\Scripts\python.exe -m pip install -r requirements.txt
+..\Scripts\python.exe escenarios\03_mision.py
+```
+
+Para sincronizar: `git pull` antes de trabajar, y `git push` después de
+cada commit. No editar en las dos computadoras sin hacer `pull` primero.
+
 ### Historial con git
 
 `gliderjax/` es un repositorio git local (sin cuenta ni GitHub). Cada paso

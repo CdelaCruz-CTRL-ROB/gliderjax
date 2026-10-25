@@ -181,7 +181,7 @@ gps_gate_depth = inf        # [m] hay fix solo si z < esto. inf = siempre hay
 # equivalente (mm de masa móvil, grados de gamma).
 m_dist = 0.0                # [kg] 0 = sin perturbación
 r_dist = [0.0, 0.0, 0.0]    # [m] posición en el marco cuerpo
-current_n = [0.0, 0.0, 0.0] # [m/s] corriente en NED (norte, este, abajo)
+current_n = [-0.2, 0.2, 0.0] # [m/s] corriente en NED (norte, este, abajo)
 
 
 # =============================================================================

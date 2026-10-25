@@ -1,0 +1,8 @@
+# gliderjax: dependencias (versiones de la computadora original, 2026-10-25)
+# Python 3.11 o más nuevo (tomllib lee config/cidesi.toml); original: 3.12.8
+#   ..\Scripts\python.exe -m pip install -r requirements.txt
+jax==0.10.2
+jaxlib==0.10.2
+numpy==2.5.1
+scipy==1.18.0
+matplotlib==3.11.0

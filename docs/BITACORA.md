@@ -44,6 +44,9 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       (`gps_gate_depth = inf`); sin ruido ni antena por ahora (entrada 19).
 - [ ] Futuro: GPS con ruido (`gps_sigma_m`) y fix solo con la antena fuera
       del agua (necesita la posición de la antena).
+- [ ] Sintonizar la corrección del estimador de deriva: con corriente
+      corrige peor que en Simulink (autor, 2026-10-25). Ver también los
+      modelos de inmersión (abajo).
 - [ ] Modelo de inmersión con giro (`fsm/dive_models.py`): sin corriente,
       el modelo recto deja una deriva falsa de 0.1-0.2 m/m (entrada 18).
 - [ ] Modelo de inmersión con k según el pitch del tramo: con ∓25° el
