@@ -104,6 +104,9 @@ def make_ref_pipeline(dt,
     init = (pitch, yaw, roll) [rad]: the returned state0 is already settled
     at these values (e.g. the initial attitude), so the shaped references
     start there instead of ramping from 0.
+    Yaw goes the short way round: the raw yaw is moved to within +-pi of
+    the rate limiter's state before limiting (170 -> -170 deg turns 20 deg,
+    not 340). The shaped yaw is continuous, so it can leave +-pi.
 
     Returns (state0, step):
         new_state, [pitch_s, yaw_s, roll_s] = step(state, [pitch, yaw, roll])
@@ -128,6 +131,8 @@ def make_ref_pipeline(dt,
         for v, (_, A, B, _) in zip(init, chans)])
 
     def step(s, raw):
+        d_yaw = raw[1] - s[1, 0]
+        raw = raw.at[1].set(s[1, 0] + jnp.arctan2(jnp.sin(d_yaw), jnp.cos(d_yaw)))
         outs, ns = [], []
         for i, (rate, A, B, C) in enumerate(chans):
             rl = _rl(s[i, 0], raw[i], rate, dt)

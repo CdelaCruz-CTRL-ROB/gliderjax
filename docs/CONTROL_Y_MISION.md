@@ -6,7 +6,7 @@
 
 ```
 FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch ─► x_g deseado ─► rc (masa móvil)
-    ─ yaw_ref ───► limitador 0.03 rad/s ─► 1/(5s+1) ─► P yaw ─► roll_ref ─► PID roll ─► u = −y_g deseado ─► γ (masa rotatoria)
+    ─ yaw_ref ───► limitador 0.03 rad/s ─► 1/(5s+1) ─► PID yaw ─► roll_ref ─► PID roll ─► u = −y_g deseado ─► γ (masa rotatoria)
     ─ Buoy_ref ────────────────────────────────────────────────────────────► dB ±3 N (sin lazo)
 ```
 
@@ -22,8 +22,8 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
   y en `02_simulacion.py` con `MODO = "directo"`.
 - Controladores sin FSM: `autopilot.py::make_attitude_controller`, usado
   en `02_simulacion.py` con `MODO = "pitch_roll"` (pitch y roll cada uno
-  por su lado, referencias de una tabla) o `MODO = "rumbo"` (el control de
-  yaw da la referencia de roll). Ver [SIMULACION.md](SIMULACION.md). El
+  por su lado, referencias de una tabla) o `MODO = "pitch_roll_yaw"` (el
+  control de yaw da la referencia de roll; signo de giro automático). Ver [SIMULACION.md](SIMULACION.md). El
   moldeado de referencias arranca en la actitud inicial (`init_refs`), para
   que no haya un giro falso si el rumbo inicial no es 0.
 - Hay **dos prefiltros distintos**: los de los actuadores (`[actuadores]`
@@ -36,15 +36,16 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 
 ## 2. Controladores de actitud
 
-Estado (2026-10-24):
+Estado (2026-10-25):
 
 - **Roll:** tu ley, parte de PID no lineal con compensación de gravedad
   (entrada 14 de la bitácora; faltan los términos d_φ, m_φ y Σ_ψ).
+  Ganancias sintonizadas por el autor con control a 100 Hz.
 - **Pitch:** el provisional de la sesión anterior; según el autor es casi
   igual a su PID no lineal y sirve así (entrada 12).
-- **Yaw:** provisional; falta tu bloque `Yaw_control`.
+- **Yaw:** tu ley, PID con el roll como control virtual (entrada 15).
 
-Ganancias: constantes al inicio de `autopilot.py` (líneas 45-53). Cada
+Ganancias: constantes al inicio de `autopilot.py` (líneas 47-55). Cada
 lazo es una función (sección 5).
 
 **Pitch: PID** (`KP_P = 0.015`, `KD_P = 0.08`, `KI_P = 0.005` (el autor
@@ -74,20 +75,34 @@ rc_cmd = m_tot · x_g / m_lin
 - Con roll el momento de gravedad es −W·(z_g·sin θ + x_g·cos θ·cos φ); la
   ley ignora el cos φ (≈ 3 % con 15° de roll).
 
-**Yaw: P** (`K_YAW = 1.2`)
+**Yaw: PID del autor → roll de referencia** (`KP_Y = 0.35`, `KD_Y = 0.2`,
+`KI_Y = 0.003`, `I_MAX_Y = 0.1` rad, `ROLL_MAX = 0.8` rad)
 
 ```
-roll_ref = clip(K_YAW · wrap(ψ_ref − ψ), ±ROLL_MAX) · turn_sign       ROLL_MAX = 0.45 rad (~26°)
+e        = wrap(ψ − ψ_ref)                (medido − referencia, camino corto)
+ė        = ψ̇ − ψ̇_ref                       (ψ̇ de la cinemática, NO r)
+I        = sat(I + KI·e·dt, ±I_MAX)        (aporte integral, en rad de roll)
+roll_ref = sat((−KP·e − KD·ė − I) · turn_sign, ±ROLL_MAX)
 ```
 
-`turn_sign` (signo de giro; antes se llamaba `cg`) viene de la FSM: +1 en
-DIVE, −1 en CLIMB, 0 en los demás estados. Invierte el sentido del giro
-entre bajada y subida (ver [MODELO.md](MODELO.md), sección 6). Con
-`turn_sign = 0` no hay control de rumbo.
+- `wrap(a) = atan2(sin a, cos a)`: el error siempre es el del camino
+  corto. El moldeado de referencias también gira por el camino corto: el
+  rumbo crudo se lleva a ±180° del estado del limitador antes de limitarlo
+  (`sim.py::make_ref_pipeline`), así que 170° → −170° son 20°, no 340°.
+  El rumbo moldeado es continuo y puede salir de ±180°.
+- ψ̇ = (q·sin φ + r·cos φ)/cos θ (`euler_rates(x)[2]`).
+- `turn_sign` (signo de giro, `rollyawdir` en Simulink; antes se llamaba
+  `cg`): en misión viene de la FSM, +1 en DIVE, −1 en CLIMB, 0 en los
+  demás estados. En `02_simulacion.py` (modo `pitch_roll_yaw`) se calcula
+  igual a partir del pitch de la tabla: bajada +1, subida −1, pitch 0 → 0.
+  Invierte el sentido del giro entre bajada y subida (ver
+  [MODELO.md](MODELO.md), sección 6). Con `turn_sign = 0` no hay control
+  de rumbo (el integrador sigue integrando, hasta su tope).
+- `I_MAX_Y = 0.1` rad (5.7° de roll) lo puse yo, provisional.
 
 **Roll: ley del autor, parte de PID no lineal con compensación de
-gravedad** (ganancias de Simulink por ahora: `KP_R = 0.008`, `KD_R = 0`
-(`0*0.01`), `KI_R = 0.01`, `I_MAX_R = 0.004`)
+gravedad** (ganancias sintonizadas por el autor con control a 100 Hz:
+`KP_R = 0.008`, `KD_R = 0.02`, `KI_R = 0.0008`, `I_MAX_R = 0.001`)
 
 ```
 e      = φ − φ_ref                     (medido − referencia, igual que pitch)
@@ -201,11 +216,11 @@ poner tu control, reemplazas el cuerpo de la que corresponda:
 
 | Función | Línea | Recibe | Devuelve |
 |---|---|---|---|
-| `pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt)` | 95 | referencia de pitch [rad] y su derivada [rad/s] | `rc_cmd` [m] |
-| `roll_control(x, params, roll_ref, roll_ref_dot, mem, dt)` | 110 | referencia de roll [rad] y su derivada | `gamma_cmd` [rad] |
-| `yaw_control(x, params, yaw_ref, yaw_ref_dot, turn_sign, mem, dt)` | 133 | referencia de rumbo [rad], su derivada y signo de giro | `roll_ref` [rad] |
+| `pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt)` | 97 | referencia de pitch [rad] y su derivada [rad/s] | `rc_cmd` [m] |
+| `roll_control(x, params, roll_ref, roll_ref_dot, mem, dt)` | 112 | referencia de roll [rad] y su derivada | `gamma_cmd` [rad] |
+| `yaw_control(x, params, yaw_ref, yaw_ref_dot, turn_sign, mem, dt)` | 135 | referencia de rumbo [rad], su derivada y signo de giro | `roll_ref` [rad] |
 
-Las tres devuelven además `mem` actualizada. `attitude_step` (línea 142)
+Las tres devuelven además `mem` actualizada. `attitude_step` (línea 151)
 las conecta y calcula las derivadas de las referencias; no hace falta
 tocarla.
 
@@ -213,14 +228,14 @@ tocarla.
 
 | | Contenido |
 |---|---|
-| `x` | estado verdadero (26): `x[2]` z, `x[3]` φ, `x[4]` θ, `x[5]` ψ, `x[6:9]` u, v, w, `x[9]` p, `x[10]` q, `x[11]` r [m, rad, m/s, rad/s]. **p, q, r son del cuerpo, no las derivadas de los ángulos**: para φ̇, θ̇, ψ̇ usa `euler_rates(x)` (línea 80) |
+| `x` | estado verdadero (26): `x[2]` z, `x[3]` φ, `x[4]` θ, `x[5]` ψ, `x[6:9]` u, v, w, `x[9]` p, `x[10]` q, `x[11]` r [m, rad, m/s, rad/s]. **p, q, r son del cuerpo, no las derivadas de los ángulos**: para φ̇, θ̇, ψ̇ usa `euler_rates(x)` (línea 82) |
 | `*_ref_dot` | derivada de la referencia [rad/s]: diferencia hacia atrás en un periodo de control. Pitch y rumbo vienen moldeados (suaves); en modo `pitch_roll` el escalón de roll de la tabla da un pico de escalón/dt en una sola muestra |
 | `params` | todo lo del archivo de configuración (`params.m_lin`, `params.r_lin0`, ...) |
 | `mem` | la **memoria** de ese lazo: `N_MEM = 4` números que se guardan entre llamadas (integradores, valor anterior para una derivada, estado de un filtro). Empieza en 0 |
 | `dt` | periodo del controlador [s] (`PERIODO_CONTROL`) |
 
 Las referencias llegan **ya moldeadas**: pitch ±0.1 rad/s → 1/(5s+1);
-rumbo ±0.03 rad/s → 1/(5s+1); roll sin moldeado.
+rumbo ±0.03 rad/s → 1/(5s+1) (por el camino corto); roll sin moldeado.
 
 **Cómo corren:** cada `PERIODO_CONTROL`; el comando se mantiene entre
 ejecuciones (ZOH) y luego pasa por las cadenas de los actuadores y sus
@@ -232,10 +247,10 @@ controlador.
 | `MODO` | Qué lazos corren | Tabla |
 |---|---|---|
 | `"pitch_roll"` | pitch y roll, cada uno con su referencia; el de yaw no corre | `FASES_PITCH_ROLL`: t, pitch_ref [°], roll_ref [°], dB [N] |
-| `"rumbo"` | pitch; yaw → roll_ref → roll | `FASES_RUMBO`: t, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro |
+| `"pitch_roll_yaw"` | pitch; yaw → roll_ref → roll; signo de giro automático (bajada +1, subida −1) | `FASES_PITCH_ROLL_YAW`: t, pitch_ref [°], rumbo_ref [°], dB [N] |
 
-Plan sugerido: sintonizar pitch y roll con `"pitch_roll"`, luego el de
-yaw con `"rumbo"`.
+Plan: sintonizar pitch y roll con `"pitch_roll"`, luego el de yaw con
+`"pitch_roll_yaw"`, y después la misión por waypoints (FSM).
 
 **Reglas de JAX** (la función se compila):
 
@@ -258,7 +273,7 @@ norte, + hacia el este).
 |---|---|
 | 0–3 | memoria de pitch (0 = aporte integral KI·∫e del PID provisional, en m de x_g) |
 | 4–7 | memoria de roll (0 = aporte integral KI·∫e, en m de u = −y_g) |
-| 8–11 | memoria de yaw |
+| 8–11 | memoria de yaw (0 = aporte integral KI·∫e, en rad de roll) |
 | 12, 13, 14 | referencias que usaron los lazos: pitch, roll, yaw [rad] (también el valor anterior para las derivadas) |
 | 15–23 | estados del moldeado de referencias |
 | 24–39 | solo misión: FSM y último fix GPS |

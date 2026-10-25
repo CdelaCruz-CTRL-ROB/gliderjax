@@ -52,13 +52,65 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Roll: términos −(d_φ/W)·φ̇, −(m_φ/W)·φ̈_d y Σ_ψ de la ley; sintonizar
       con la compensación de gravedad (ver [DISENO_ROLL.md](DISENO_ROLL.md),
       sección 8).
-- [ ] Reemplazar controladores provisionales por los bloques de Simulink:
-      roll listo (entrada 13); pitch se queda el provisional (entrada 12);
-      falta `Yaw_control`.
+- [x] Reemplazar controladores provisionales por los del autor: roll
+      (entradas 13 y 14), yaw (entrada 15); pitch se queda el provisional
+      (entrada 12).
+- [ ] Yaw: sobrepaso de ~13° por carga del integrador; sintonizar
+      `I_MAX_Y` / `KI_Y` o la razón del moldeado de rumbo (entrada 15).
+- [ ] Waypoints: integrador de yaw con `turn_sign = 0` (superficie,
+      fondo) sigue integrando hasta su tope (entrada 15).
 - [ ] Script de misión por waypoints (`escenarios/03_...`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-25 (15) — Yaw: PID del autor; modo pitch_roll_yaw; rumbo por el camino corto
+
+Antes, el autor subió el control a 100 Hz (`PERIODO_CONTROL = 0.01`) y
+sintonizó roll: KP_R 0.008, KD_R 0.02, KI_R 0.0008, I_MAX_R 1 mm;
+ROLL_MAX 0.8 rad.
+
+Ley de yaw del autor (Simulink):
+
+```
+delta_yaw = yaw - yaw_ref            (con atan2: camino corto)
+roll_ref  = (-0.35*e - 0.2*ed - 0.003*ei) * rollyawdir
+```
+
+- `yaw_control`: e = wrap(ψ − ψ_ref), ė = ψ̇ − ψ̇_ref con ψ̇ de la
+  cinemática (no r), aporte integral KI·∫e con tope ±`I_MAX_Y` (0.1 rad,
+  provisional), roll_ref saturado en ±`ROLL_MAX`. Se quita `K_YAW`.
+- **Camino corto también en el moldeado.** El limitador de razón del rumbo
+  iba hacia el valor crudo: con una tabla 170° → −170° daba la vuelta
+  larga (340°). Ahora el rumbo crudo se lleva a ±180° del estado del
+  limitador (`make_ref_pipeline`). En la misión la FSM ya lo hacía (estado
+  DIVE: rumbo relativo al actual, líneas 236-239 de V2).
+- **Modo `pitch_roll_yaw`** en `02_simulacion.py` (reemplaza a `"rumbo"`):
+  tabla `FASES_PITCH_ROLL_YAW` (t, pitch, rumbo, dB, nombre); el signo de
+  giro sale del pitch de la tabla, igual que la FSM: bajada +1, subida −1,
+  pitch 0 → 0. La figura muestra el aporte integral del yaw en el panel de
+  roll.
+
+Resultados (control a 100 Hz; escalón de rumbo 0 → 90° en t = 100 s):
+
+| Caso | Final | Sobrepaso | ±1° desde | Aporte integral |
+|---|---|---|---|---|
+| Bajada (−25°) | 90.00° | 12.8° | t = 493 s | topado en −5.7° |
+| Subida (+25°) | 90.00° | 12.9° | t = 492 s | topado en −5.7° |
+| Bajada, KI_Y = 0 | 90.00° | 0 | t = 278 s | — |
+| Subida, KI_Y = 0 | 90.00° | 0 | t = 272 s | — |
+
+El sobrepaso viene del integrador: la referencia moldeada avanza a
+0.03 rad/s (1.7 °/s) y el planeador gira más lento (≈1 °/s con 15° de
+roll); el error crece y el integrador se carga. Opciones para sintonizar:
+`I_MAX_Y` y `KI_Y`, o bajar la razón del moldeado de rumbo.
+
+- Misión de waypoints (demo, control a 0.25 s): completa (5/5).
+- Con `turn_sign = 0` (FSM en superficie o en el fondo) el integrador de
+  yaw sigue integrando hasta su tope; al empezar la siguiente inmersión
+  arranca cargado. Revisar en el modo de waypoints.
 
 ---
 

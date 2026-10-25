@@ -16,8 +16,9 @@ Three modes, one architecture (all compatible with make_simulator):
 
 roll_control is the author's roll law (nonlinear PID with gravity
 compensation; the d_phi, m_phi and Sigma_psi terms are not in yet).
-pitch_control and yaw_control are still PLACEHOLDERS (working, but NOT the Simulink
-Pitch_control / Yaw_control blocks) -- the functions to replace. Each one
+yaw_control is the author's heading PID (roll as virtual control).
+pitch_control is the placeholder, accepted by the author as equivalent to
+the author's own nonlinear PID. Each one
 gets N_MEM numbers of memory (integrators, previous values, filter states)
 carried between calls, and the reference together with its rate
 (ref_dot, the backward difference of the reference over one controller
@@ -26,7 +27,7 @@ period).
 ctrl_state layout, all scope-able via tel["ctrl_state"] (scope "ctrl_state:i"):
   [0:4]    pitch memory    ([0] = pitch PID integral term)
   [4:8]    roll memory     ([0] = roll PID integral term)
-  [8:12]   yaw memory
+  [8:12]   yaw memory      ([0] = yaw PID integral term)
   [12:15]  references the loops used [pitch, roll, yaw] [rad] (also the
            previous value for ref_dot)
   [15:24]  reference shaping states (3x3)
@@ -45,11 +46,12 @@ from .geodesy import ecef2lla
 # ---- placeholder attitude gains (tuned for the CIDESI soft-z_g vehicle) ----
 KP_P, KD_P, KI_P = 0.015, 0.08, 0.005       # pitch PID (x_g units / rad)
 I_MAX_P = 0.005                              # [m of x_g] max |integral term|
-K_YAW = 1.2                                  # yaw err -> roll_ref [rad/rad]
-ROLL_MAX = 0.45                              # [rad] roll_ref saturation
-KP_R, KD_R, KI_R = 0.008, 0.0, 0.01          # roll PID (m of u / rad);
-#                                              Simulink values; KD_R: 0*0.01
-I_MAX_R = 0.004                              # [m of u] max |integral term|
+KP_Y, KD_Y, KI_Y = 0.35, 0.2, 0.003          # yaw PID (rad of roll / rad)
+I_MAX_Y = 0.1                                # [rad of roll] max |integral term|
+ROLL_MAX = 0.8                              # [rad] roll_ref saturation
+KP_R, KD_R, KI_R = 0.008, 0.02, 0.0008          # roll PID (m of u / rad);
+#                                              tuned by the author (100 Hz)
+I_MAX_R = 0.001                              # [m of u] max |integral term|
 BUOY_SIGN = -1.0
 # BUOY_SIGN maps the FSM's V2 convention (Buoy_ref: +3 dive, -3 climb) to the
 # VBD block's physical dB_ref (negative dB -> less buoyant -> dive).
@@ -131,12 +133,19 @@ def roll_control(x, params, roll_ref, roll_ref_dot, mem, dt):
 
 
 def yaw_control(x, params, yaw_ref, yaw_ref_dot, turn_sign, mem, dt):
-    """PLACEHOLDER heading P -> roll reference. Returns (roll_ref [rad], mem).
-    turn_sign = roll-to-turn sign: +1 descent, -1 climb, 0 = no heading
-    control."""
-    e_y = wrap(yaw_ref - x[5])
-    roll_ref = jnp.clip(K_YAW * e_y, -ROLL_MAX, ROLL_MAX) * turn_sign
-    return roll_ref, mem
+    """Author's heading law -> roll reference (virtual control):
+        roll_ref = (-KP e - KD e_dot - KI int(e)) * turn_sign,
+        e = wrap(psi - psi_ref)   (measured - ref, the short way round)
+    turn_sign = roll-yaw coupling sign (rollyawdir): +1 descent, -1 climb,
+    0 = no heading control. Returns (roll_ref [rad], mem), limited to
+    +-ROLL_MAX. mem[0] = integral term KI_Y * int(e) [rad of roll], limited
+    to +-I_MAX_Y."""
+    e = wrap(x[5] - yaw_ref)
+    psi_dot = euler_rates(x)[2]          # NOT r (body rate)
+    de = psi_dot - yaw_ref_dot
+    integ = jnp.clip(mem[0] + KI_Y * e * dt, -I_MAX_Y, I_MAX_Y)
+    roll_ref = (-KP_Y * e - KD_Y * de - integ) * turn_sign
+    return jnp.clip(roll_ref, -ROLL_MAX, ROLL_MAX), mem.at[0].set(integ)
 
 
 def attitude_step(x, params, shaped, turn_sign, mem, used_prev, dt,

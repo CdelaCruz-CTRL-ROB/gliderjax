@@ -71,10 +71,10 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 | | `VELOCIDAD_MARCO`, `VELOCIDAD` | `"cuerpo"`: (u, v, w) relativa al agua; `"inercial"`: (vN, vE, vD) respecto al fondo (se le resta la corriente) |
 | | `VEL_ANGULAR_DEG` | p, q, r [°/s] |
 | | `ORIGEN_GEO` | lon, lat [°]; solo si el perfil usa geodesia |
-| 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"pitch_roll"`: referencias de pitch y roll, cada controlador por su lado; `"rumbo"`: referencias de pitch y rumbo, el control de yaw da la referencia de roll |
+| 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"pitch_roll"`: referencias de pitch y roll, cada controlador por su lado; `"pitch_roll_yaw"`: referencias de pitch y rumbo, el control de yaw da la referencia de roll, signo de giro automático |
 | | `FASES` | modo directo: (t_inicio, rc [m], γ [°], dB [N], nombre); una fila = constante |
 | | `FASES_PITCH_ROLL` | modo pitch_roll: (t_inicio, pitch_ref [°], roll_ref [°], dB [N], nombre) |
-| | `FASES_RUMBO` | modo rumbo: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro, nombre). signo_giro: +1 bajando, −1 subiendo, 0 sin control de rumbo |
+| | `FASES_PITCH_ROLL_YAW` | modo pitch_roll_yaw: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], nombre). El signo de giro sale del pitch: bajada +1, subida −1, pitch 0 → 0 (sin control de rumbo). El rumbo gira por el camino corto |
 | | `PERIODO_CONTROL` | cada cuánto corren los controladores [s], múltiplo de `DT` |
 | | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (modos con control: rc = 0, γ = 0 y el dB de la primera fila); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
 | 5 Salida | `FIGURAS` | lista de figuras (comentar las que no quieras) |
@@ -106,9 +106,9 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 
 ### Modos con control
 
-Usan los controladores **provisionales** de `autopilot.py` (no tus bloques
-de Simulink): PID de pitch → rc, P de roll → γ, y en modo `"rumbo"` P de
-rumbo → roll de referencia (× signo de giro). Las referencias pasan por el
+Usan los controladores de `autopilot.py`: PID de pitch → rc, tu ley de
+roll → γ, y en modo `"pitch_roll_yaw"` tu PID de rumbo → roll de
+referencia (× signo de giro). Las referencias pasan por el
 moldeado de Simulink (pitch ±0.1 rad/s y 1/(5s+1); rumbo ±0.03 rad/s y
 1/(5s+1); roll sin moldeado), que arranca en la actitud inicial. El dB va
 directo al VBD. Cómo poner tus controladores:
@@ -116,9 +116,11 @@ directo al VBD. Cómo poner tus controladores:
 
 Agrega la figura `09_control.png`: pitch, roll y rumbo contra la
 referencia **usada** por el controlador (después del moldeado; en modo
-rumbo, la de roll es la que calculó el control de yaw) y contra la de la
-tabla; rc y γ (comando y posición); y `mem[0]` de los lazos de pitch y
-roll (el aporte integral, con líneas en ±`I_MAX_P` y ±`I_MAX_R`).
+pitch_roll_yaw, la de roll es la que calculó el control de yaw) y contra
+la de la tabla; rc y γ (comando y posición); y `mem[0]` de los lazos de
+pitch y roll (el aporte integral, con líneas en ±`I_MAX_P` y ±`I_MAX_R`).
+En modo pitch_roll_yaw, el panel de roll muestra también el aporte
+integral del yaw (en grados de roll, con ±`I_MAX_Y`).
 
 Pruebas (2026-10-24, controlador a 0.25 s; pitch con θ̇ − θ̇_ref, aporte
 integral con tope y `KI_P = 0.005`; roll con la ley del autor (PID no
@@ -133,13 +135,29 @@ entradas 11 a 14), arrancando del reposo a 200 m con actuadores en neutro:
   - aporte integral de roll: llega al tope (4 mm) y termina en 0.06 mm
     (la gravedad ya la compensa la ley);
   - con roll sostenido de 15° el planeador gira (+0.99 °/s).
-- **`rumbo`**, rumbo_ref 0° → 45° en t = 200 s:
+- **`rumbo`** (modo anterior, con el P provisional de yaw), rumbo_ref
+  0° → 45° en t = 200 s:
   - el rumbo pasa de 44° en t = 249 s y se queda en 45.0°; roll máximo
     27.7° (la referencia de roll satura en 25.8°);
   - al meter el roll, primero gira 2.7° al lado contrario;
   - pitch se mantiene entre −25.4° y −24.7° durante el giro.
 - Con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
   (sin giro falso).
+
+Pruebas del modo **`pitch_roll_yaw`** (2026-10-25; control a 100 Hz con
+las ganancias de pitch y roll del autor; PID de yaw del autor; bitácora
+entrada 15):
+
+- Escalón de rumbo 0° → 90° a −25° (bajada) y a +25° (subida): llega a
+  90.00° en los dos casos (el signo de giro automático funciona).
+  Sobrepasa 12.8°, y queda dentro de ±1° unos 390 s después del cambio.
+  Roll máximo ~25°.
+- El sobrepaso viene del integrador: mientras la referencia moldeada
+  avanza (1.7 °/s) el planeador gira más lento (≈1 °/s con 15° de roll),
+  el error crece y el aporte integral se va al tope (−5.7°). Con
+  `KI_Y = 0` no sobrepasa y queda dentro de ±1° unos 175 s después.
+- Tabla de ejemplo (0 → 170 → −170 → subida → −90): de 170° a −170° gira
+  +20° por el camino corto.
 
 ### Paso de integración
 
