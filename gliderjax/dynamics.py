@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from .params import GliderParams, ModelConfig, G0, RHO
+from .params import GliderParams, ModelConfig, G0
 
 
 def skew(a):
@@ -65,19 +65,20 @@ def R_flow_to_body(alpha, beta):
 # ----------------------------------------------------------------------------
 def vbd_outputs(p: GliderParams, dxv):
     dV = -dxv * p.vbd_area
-    # neutral at dB = 0 for ANY mass set (Simulink: W_total = 58*9.81 fixed)
-    B_neutral = (p.m_static + p.m_lin + p.m_rot + p.m_pist) * G0
-    B = B_neutral + dV * RHO * G0
+    # buoyancy is independent of the masses: neutral only if
+    # rho*V_displaced = total mass (check with escenarios/00_balance_estatico)
+    B_neutral = p.rho * G0 * p.V_displaced
+    B = B_neutral + dV * p.rho * G0
     r_p = jnp.array([p.vbd_x0 + dxv, 0.0, 0.0])
     x_centroid = p.vbd_x0 + dxv / 2.0
-    dB_act = dV * RHO * G0
+    dB_act = dV * p.rho * G0
     x_b = jnp.where(B > 0, dB_act * x_centroid / B, 0.0)
     return B, r_p, x_b
 
 
 def dxv_from_dB_ref(p: GliderParams, dB_ref):
     """Command mapping of the VBD block: dB_ref -> saturated piston target."""
-    dx_req = -(dB_ref / (RHO * G0)) / p.vbd_area
+    dx_req = -(dB_ref / (p.rho * G0)) / p.vbd_area
     return jnp.clip(dx_req, -p.vbd_max_disp, p.vbd_max_disp)
 
 

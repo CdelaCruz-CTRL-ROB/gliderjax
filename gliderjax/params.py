@@ -5,8 +5,6 @@ Simulink blocks). This module only defines the structure and loads it:
 
     p, cfg = load_config("config/cidesi.toml", model="simulink", dt=0.05)
 
-rho=1000 (freshwater) per the VBD block -- confirm consistency with CFD
-density.
 """
 from __future__ import annotations
 
@@ -18,7 +16,6 @@ import tomllib
 import jax.numpy as jnp
 
 G0 = 9.81
-RHO = 1000.0          # per VBD block (freshwater)
 
 DEFAULT_CONFIG = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -43,6 +40,10 @@ class GliderParams(NamedTuple):
     m_pist: jnp.ndarray        # VBD piston moving mass
     I_pist: jnp.ndarray
 
+    # ----- buoyancy (independent of the masses) ----------------------------
+    rho: jnp.ndarray           # water density [kg/m^3]
+    V_displaced: jnp.ndarray   # hull volume with VBD at neutral [m^3]:
+    #                            B_neutral = rho g V (Simulink: 58*9.81)
     # ----- VBD geometry (exact port of fcn_VBD_actuator) -------------------
     vbd_area: jnp.ndarray      # piston area
     vbd_max_disp: jnp.ndarray  # half stroke
