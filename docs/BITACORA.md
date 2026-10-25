@@ -30,8 +30,8 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Perturbaciones: se quitan `disturb_xg`/`disturb_yg`; quedan
       `disturb_xlin` (calibración) y la masa de perturbación `m_dist`.
 - [x] `cg` → `turn_sign` / "signo de giro".
-- [ ] ¿Error de calibración también en la masa rotatoria (cero de γ mal
-      calibrado), análogo a `disturb_xlin`?
+- [x] Error de calibración en γ: no se agrega; una `m_dist` lateral da el
+      mismo efecto (ver [MODELO.md](MODELO.md), sección 2.5).
 - [ ] Barridos de parámetros: correr varias variantes y superponerlas
       ("mover todo y ver qué da"). Puede salir de `02_simulacion.py`.
 - [ ] ¿Escalar los coeficientes hidrodinámicos con ρ/ρ_CFD al cambiar
@@ -51,6 +51,20 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (9) — ¿Perturbación de calibración en γ?
+
+El autor observó que la masa de perturbación ya mete un error de cero,
+porque el cero virtual se calcula sin ella, así que las perturbaciones en
+la posición de los actuadores son redundantes. Comprobado: `disturb_xlin =
+2 mm` y `m_dist = 0.1 kg` en x = 0.3 m (mismo momento) con `V_displaced`
+compensado dan el mismo vuelo (0.004° de diferencia en pitch en 800 s);
+sin compensar el volumen cambia la velocidad por el peso extra (0.670 vs
+0.580 m/s bajando). Decisión: no se agrega una perturbación de
+calibración en γ; `disturb_xlin` se queda (está en Simulink, en mm, sin
+peso). Tabla en [MODELO.md](MODELO.md), sección 2.5.
 
 ---
 

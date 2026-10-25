@@ -283,6 +283,29 @@ archivo de configuración).
   piden rc = −12.0 mm para pitch 0 (equivale a mover la masa móvil
   0.15/15 = 10 mm, más los 2 mm); con rc = 0 el pitch en reposo es −24°.
 
+**Error de calibración y masa de perturbación son casi lo mismo**
+(autor, 2026-10-24). Como el cero virtual se calcula sin la masa de
+perturbación, una `m_dist` ya mete un error de cero que el control no
+conoce. La única diferencia es el peso: un error de calibración mueve el
+CG sin agregar peso; una masa de perturbación agrega `m_dist·g`.
+Comprobado (bajada y subida en lazo abierto, 800 s):
+
+| Caso | Pitch bajada | V bajada | Pitch subida | V subida |
+|---|---|---|---|---|
+| nominal | −38.46° | 0.565 | +36.60° | 0.553 |
+| `disturb_xlin = 2 mm` | −41.00° | 0.580 | +33.75° | 0.535 |
+| `m_dist = 0.1 kg` en x = 0.3 m, `V_displaced` + 0.1 L | −41.00° | 0.580 | +33.75° | 0.535 |
+| igual, sin compensar `V_displaced` | −41.36° | 0.670 | +33.40° | 0.437 |
+
+(0.1 kg × 0.3 m = 15 kg × 2 mm.) Con el volumen compensado la diferencia
+máxima es 0.004° en pitch y 6 mm en profundidad; sin compensar domina el
+peso extra (−0.98 N).
+
+Por eso **no se agrega un error de calibración para γ**: una `m_dist` con
+`y ≠ 0` (y `V_displaced` compensado, si se quiere sin peso extra) produce
+el mismo efecto. `disturb_xlin` se queda porque está en tu Simulink y se
+expresa directo en mm del actuador, sin tocar la flotabilidad.
+
 Ejemplo de su efecto: `disturb_xlin = 5 mm` en la prueba de validación lleva
 el pitch de bajada de −38.5° a −44.5° y el de subida de +36.6° a +29.1°.
 
