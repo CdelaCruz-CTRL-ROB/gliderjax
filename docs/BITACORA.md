@@ -45,6 +45,9 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       sin él).
 - [ ] DONE con flotabilidad positiva (confirmar contra V2).
 - [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
+- [ ] Diseño de roll: signo del error y variable de control (y_g contra
+      u_φ = −y_g); planteado en [DISENO_ROLL.md](DISENO_ROLL.md) para otra
+      sesión. Mientras tanto se queda como en Simulink (ref − medido).
 - [ ] Reemplazar controladores provisionales por los bloques de Simulink:
       roll listo (entrada 13); pitch se queda el provisional (entrada 12);
       falta `Yaw_control`.
@@ -74,8 +77,10 @@ gamma = asin( sat(-(yg * m_total)/(m_rot * r_rot), ±1) )
 - **Signo del error: e = φ_ref − φ**, al revés que en pitch. Con
   e = φ − φ_ref y estas ganancias el lazo diverge: roll −85°, γ en +90°.
   Razón: y_g > 0 da roll positivo y x_g > 0 da pitch negativo.
-  Confirmar contra Simulink (allí debe ser ref − medido, o haber un signo
-  en otro lado).
+  Confirmado por el autor: en Simulink está ref − medido. En su diseño
+  usa medido − ref; el tema queda planteado en
+  [DISENO_ROLL.md](DISENO_ROLL.md) (con u_φ = −y_g es el mismo lazo, bit a
+  bit). Por ahora se queda como en Simulink.
 - Se quitó la ganancia del P provisional (`K_ROLL`).
 - `02_simulacion.py`: la figura de control grafica también `mem[0]` de
   roll.

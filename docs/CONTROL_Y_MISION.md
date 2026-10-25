@@ -99,7 +99,8 @@ y_g    = KP·e + KD·ė + I
 - **Signo del error.** y_g > 0 da roll positivo (momento
   +W·y_g·cos φ·cos θ), mientras que x_g > 0 da pitch negativo. Con
   e = φ − φ_ref y ganancias positivas el lazo diverge (probado: roll a
-  −85° y γ en +90°).
+  −85° y γ en +90°). Es como está en Simulink. El diseño del autor usa
+  medido − ref: pendiente, ver [DISENO_ROLL.md](DISENO_ROLL.md).
 - y_g → γ: la masa rotatoria está en y_rot = −R_rot·sin γ, así que
   y_g = −m_rot·R_rot·sin γ / m_tot (tu `fcn`). m_tot, m_rot y R_rot salen
   de los parámetros (m_tot sin `m_dist`). Autoridad máxima:

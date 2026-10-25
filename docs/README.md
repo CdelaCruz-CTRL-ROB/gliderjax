@@ -14,7 +14,8 @@ hay en el modelo, de dónde viene cada parte y dónde se cambia cada cosa**.
 | [SIMULACION.md](SIMULACION.md) | Balance estático (cero virtual, neutralidad) y simulación manual: solver, condiciones iniciales, comparación con la corrida anterior |
 | [VALIDACION.md](VALIDACION.md) | Script de validación en lazo abierto: cómo usarlo, qué muestra cada figura, cómo comparar con Simulink, señales disponibles |
 | [MODELO.md](MODELO.md) | Inventario del modelo físico: qué viene de Simulink y qué se agregó, comparación con tu código, saturación, crossflow, superficie, inversión del giro |
-| [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales (provisionales), FSM de waypoints estado por estado, problemas conocidos |
+| [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales, FSM de waypoints estado por estado, problemas conocidos |
+| [DISENO_ROLL.md](DISENO_ROLL.md) | Pendiente de diseño: signo del error y variable de control del roll (para trabajarlo en otra sesión) |
 | [BITACORA.md](BITACORA.md) | Registro fechado de cada paso, experimento y decisión |
 | [referencia_simulink/](referencia_simulink/) | Código original de Simulink (la "verdad" para validar) |
 
@@ -63,7 +64,7 @@ gráficas) y llaman a la simulación.
 | masa de perturbación y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
 | perfil, solver, paso, duración, condiciones iniciales, actuadores | el script (`02_simulacion.py`, secciones 1 a 4) |
-| controladores (provisionales): ganancias y funciones `pitch_control`, `roll_control`, `yaw_control` | `gliderjax/autopilot.py` (guía en [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5) |
+| controladores: ganancias y funciones `pitch_control`, `roll_control`, `yaw_control` | `gliderjax/autopilot.py` (guía en [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5) |
 | constantes de la FSM de waypoints | `gliderjax/navigation.py`, líneas 20-36 |
 | ecuaciones del modelo | `gliderjax/dynamics.py` (mapa en [MODELO.md](MODELO.md)) |
 
