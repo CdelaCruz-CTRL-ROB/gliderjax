@@ -70,8 +70,11 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 | | `VELOCIDAD_MARCO`, `VELOCIDAD` | `"cuerpo"`: (u, v, w) relativa al agua; `"inercial"`: (vN, vE, vD) respecto al fondo (se le resta la corriente) |
 | | `VEL_ANGULAR_DEG` | p, q, r [°/s] |
 | | `ORIGEN_GEO` | lon, lat [°]; solo si el perfil usa geodesia |
-| 4 Actuadores | `FASES` | tabla (t_inicio, rc [m], γ [°], dB [N], nombre); una fila = constante |
-| | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (sin transitorio); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
+| 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"control"`: la tabla da referencias y los controladores (provisionales) mueven rc y γ |
+| | `FASES` | modo directo: (t_inicio, rc [m], γ [°], dB [N], nombre); una fila = constante |
+| | `FASES_CONTROL` | modo control: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], cg, nombre). cg: +1 bajando, −1 subiendo, 0 sin control de rumbo |
+| | `PERIODO_CONTROL` | cada cuánto corre el controlador [s], múltiplo de `DT` |
+| | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (modo control: rc = 0, γ = 0 y el dB de la primera fila); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
 | 5 Salida | `FIGURAS` | lista de figuras (comentar las que no quieras) |
 | | `COMPARAR_CON_ANTERIOR` | superponer con la corrida anterior |
 | | `ALFA_VALIDO_DEG` | aviso si \|α\| pasa de esto |
@@ -97,6 +100,28 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
    de la saturación.
 6. Resumen por fase y estado final.
 7. Figuras, más `00_vs_anterior.png` con las dos corridas superpuestas.
+
+### Modo control
+
+Usa los controladores **provisionales** de `autopilot.py` (no tus bloques
+de Simulink): PID de pitch → rc, P de rumbo → roll de referencia (× cg),
+P de roll → γ. Las referencias pasan por el moldeado de Simulink (pitch
+±0.1 rad/s y 1/(5s+1); rumbo ±0.03 rad/s y 1/(5s+1)), que arranca en la
+actitud inicial. El dB va directo al VBD.
+
+Agrega la figura `09_control.png`: pitch y rumbo contra la referencia de
+la tabla (sin moldear), roll, y rc y γ (comando y posición).
+
+Prueba (2026-10-24): bajada con pitch_ref −25°, dB −3 N, y en t = 200 s
+rumbo_ref de 0° a 45°:
+
+- pitch llega a −25.0° (error < 0.01° en estacionario);
+- el rumbo llega a 45° hacia t = 260 s, con roll de hasta +17°
+  (γ ≈ −18°);
+- al meter el roll, el planeador primero gira ~3° **al lado contrario**
+  durante ~10 s y luego gira hacia la referencia;
+- con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
+  (sin giro falso).
 
 ### Paso de integración
 

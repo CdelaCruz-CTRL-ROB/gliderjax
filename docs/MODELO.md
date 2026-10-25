@@ -22,8 +22,8 @@ cada uno. Los switches están en el mismo archivo, como perfiles
 | C_RB (Coriolis de cuerpo rígido) | Simulink (calculate_coriolis_total_fossen), **verificado** (sección 2.3) | `dynamics.py::C_rigid` | siempre |
 | Masa añadida MA | Simulink, **verificado**; solo la diagonal (los acoplamientos de 0.1 y 0.01 en 0, sección 2.2) | `config/cidesi.toml`, `[masa_anadida]` | siempre |
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), **verificado** (sección 2.4) | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
-| Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados CONFIRMAR** | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
-| Fuerzas de restauración (peso + flotación) | Reporte, g(η), según el port | `dynamics.py::tau_restoring` | siempre |
+| Cadenas de actuadores (prefiltros, limitadores de tasa, TFs) | Simulink, **verificado por el autor** (2026-10-24) | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
+| Fuerzas de restauración (peso + flotación) | Simulink, **verificado** (sección 2.7) | `dynamics.py::tau_restoring` | siempre |
 | Perturbación de CG (disturb_xg, disturb_yg) | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_disturb_wiring=True` |
 | Perturbación de la masa móvil (disturb_xlin): error en el cero virtual del actuador | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
 | Superficie de 2 puntos (B_scale, Δx_b) | Simulink (fcn_buoyancy_surface), **verificado** (sección 2.6) | `dynamics.py::surface_two_point` | `surface_model="simulink"` |
@@ -61,9 +61,10 @@ tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 3. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
    no se porta. El pitch de cada inmersión lo da la misión. Sección 2.4.
 
-Falta verificar: el bloque que arma el vector de restauración (el port
-usa `r_b = [x_b + Δx_b, 0, 0]` y `B·B_scale`, confirmado por el autor) y
-las cadenas de actuadores (valores CONFIRMAR).
+Con esto, **todo el modelo físico del perfil `simulink` está comparado
+contra tu Simulink** (2026-10-24). Queda abierto cómo entran
+`disturb_xg`/`disturb_yg` (sección 2.2) y los controladores, que todavía
+son provisionales ([CONTROL_Y_MISION.md](CONTROL_Y_MISION.md)).
 
 ## 2. Comparación con tus funciones de Simulink
 
@@ -225,10 +226,14 @@ el actuador no decide la guiada; el pitch se da explícitamente para cada
 inmersión. Pendiente para el script de waypoints: pitch por inmersión como
 parámetro de la misión.
 
-Supuesto del port, sin verificar: `fcn_VBD_actuator` recibe dB **después**
-de la dinámica del actuador (prefiltro, limitador, `1/(2s+1)`), así que el
-pistón sigue a la flotabilidad filtrada. Ver los valores CONFIRMAR de
-`[actuadores]`.
+`fcn_VBD_actuator` recibe dB **después** de la dinámica del actuador
+(prefiltro, limitador, `1/(2s+1)`), así que el pistón sigue a la
+flotabilidad filtrada. Cadenas verificadas por el autor (2026-10-24).
+
+**Volumen desplazado y VBD.** `V_displaced` es el volumen con el pistón a
+la **mitad de su carrera** (Δx = 0, dB = 0). El VBD suma o resta alrededor
+de ese valor: ±área·carrera/2 = ±0.503 L = ±4.93 N con ρ = 1000. El CB en
+el origen corresponde a ese mismo volumen (`rb_neutral = [0,0,0]`).
 
 ### 2.5 Posición de la masa móvil: `fcn_r_lin`
 
@@ -285,6 +290,19 @@ desde 20 m con dB = +3 N hasta quedar flotando. Promedio de los últimos
 Los dos flotan con el 0.5 % del volumen fuera, que equivale a los +3 N de
 flotabilidad (0.5 % de 569 N). La diferencia está en el transitorio de
 llegada y el pitch final.
+
+### 2.7 Vector de restauración
+
+Referencia: [referencia_simulink/fcn_restauracion.m](referencia_simulink/fcn_restauracion.m)
+(revisado 2026-10-24)
+
+Tu función es el g(η) de Fossen, con W, B, r_g (con perturbaciones), x_b
+(con Δx_b de superficie) y y_b = z_b = 0. El port arma lo mismo como
+fuerzas físicas: `tau_restoring = [f_g + f_b; r_g × f_g + r_b × f_b]` =
+**−T**, y lo suma al lado derecho (tu diagrama resta T).
+
+Verificado numéricamente: 2000 casos al azar (actitud, r_g, x_b, W ≠ B),
+diferencia máxima |tau_port + T| = 1e-13.
 
 ## 3. Saturación tanh de α y β
 

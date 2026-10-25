@@ -72,28 +72,43 @@ def attitude_step(x, params, refs, cg, integ, dt_ctrl):
     return jnp.array([rc_cmd, gamma_cmd, 0.0]), integ, roll_ref
 
 
+def piecewise_schedule(schedule):
+    """schedule = [(t_start, v1, v2, ...), ...] sorted by t_start ->
+    f(t) = values of the last row with t_start <= t (like a Signal Builder)."""
+    sch = jnp.asarray(schedule, dtype=float)
+    t_starts, rows = sch[:, 0], sch[:, 1:]
+
+    def f(t):
+        # +1e-6: t is accumulated as t + dt, so a phase starting at 300.0
+        # must not wait one extra step because t reads 299.99999999
+        i = jnp.searchsorted(t_starts, t + 1e-6, side="right") - 1
+        return rows[jnp.clip(i, 0, rows.shape[0] - 1)]
+
+    return f
+
+
 def make_open_loop_controller(schedule):
     """MANUAL mode, time-scheduled (like a Simulink Signal Builder).
     schedule = [(t_start, rc_cmd [m], gamma_cmd [rad], dB_cmd [N]), ...]
     sorted by t_start; each row's commands hold until the next row starts.
     dB_cmd in PHYSICAL VBD convention (negative = dive).
     Returns (ctrl_state0, controller)."""
-    sch = jnp.asarray(schedule, dtype=float)
-    t_starts, rows = sch[:, 0], sch[:, 1:4]
+    cmds = piecewise_schedule(schedule)
 
     def controller(t, x, cs, params):
-        # +1e-6: t is accumulated as t + dt, so a phase starting at 300.0
-        # must not wait one extra step because t reads 299.99999999
-        i = jnp.searchsorted(t_starts, t + 1e-6, side="right") - 1
-        return rows[jnp.clip(i, 0, rows.shape[0] - 1)], cs
+        return cmds(t), cs
 
     return jnp.zeros(1), controller
 
 
-def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None):
+def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None,
+                             init_refs=(0.0, 0.0)):
     """SEMI-AUTOMATIC mode. refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, cg]
-    (dB_cmd in PHYSICAL VBD convention: negative = dive)."""
-    kw = ref_pipeline_kwargs or {}
+    (dB_cmd in PHYSICAL VBD convention: negative = dive).
+    init_refs = (pitch, yaw) [rad] where the shaped references start (use
+    the initial attitude; default 0 ramps from 0)."""
+    kw = dict(ref_pipeline_kwargs or {})
+    kw.setdefault("init", (init_refs[0], init_refs[1], 0.0))
     ref0, ref_step = make_ref_pipeline(dt_ctrl, **kw)
 
     def controller(t, x, cs, params):
@@ -104,7 +119,7 @@ def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None):
         cmds = cmds.at[2].set(raw[2])
         return cmds, jnp.concatenate([jnp.array([integ]), ref_s.ravel()])
 
-    return jnp.zeros(10), controller
+    return jnp.concatenate([jnp.zeros(1), ref0.ravel()]), controller
 
 
 def make_waypoint_controller(mission, dt_ctrl, ref_pipeline_kwargs=None):

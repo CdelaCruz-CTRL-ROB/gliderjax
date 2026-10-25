@@ -17,7 +17,17 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 - Todo junto: `autopilot.py::make_waypoint_controller`.
 - Sin FSM ni controladores (lazo abierto, tabla de fases):
   `autopilot.py::make_open_loop_controller`, usado en
-  `escenarios/01_validacion_dinamica.py` (ver [VALIDACION.md](VALIDACION.md)).
+  `escenarios/01_validacion_dinamica.py` (ver [VALIDACION.md](VALIDACION.md))
+  y en `02_simulacion.py` con `MODO = "directo"`.
+- Controladores sin FSM (tabla de referencias de pitch, rumbo, dB y cg):
+  `autopilot.py::make_attitude_controller`, usado en `02_simulacion.py` con
+  `MODO = "control"` (ver [SIMULACION.md](SIMULACION.md)). El moldeado de
+  referencias arranca en la actitud inicial (`init_refs`), para que no haya
+  un giro falso si el rumbo inicial no es 0.
+- Hay **dos prefiltros distintos**: los de los actuadores (`[actuadores]`
+  del archivo de configuración, verificados) y el moldeado de las
+  referencias de control (`sim.py::make_ref_pipeline`, valores en el
+  código).
 - En `demos/demo_mission.py` el controlador y la FSM corren cada
   `CTRL_EVERY × DT = 5 × 0.05 = 0.25 s` (el comentario del demo dice 0.5 s;
   es incorrecto).

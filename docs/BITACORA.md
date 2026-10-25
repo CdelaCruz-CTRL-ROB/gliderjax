@@ -24,15 +24,19 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Script de balance estático y cero virtual (`00_balance_estatico.py`).
 - [x] Script de simulación manual con solver, condiciones iniciales y
       comparación con la corrida anterior (`02_simulacion.py`).
-- [ ] `disturb_xg`/`disturb_yg`: el autor lo está pensando (hoy entran en
-      r_g después de armar M, como en Simulink).
+- [x] Vector de restauración verificado (`fcn_restauracion.m`).
+- [x] Cadenas de actuadores verificadas (autor).
+- [x] Switch directo / control en `02_simulacion.py`.
+- [ ] `disturb_xg`/`disturb_yg`: en tu Mbr+Ma fcn se suman a r_g **después**
+      de armar M (no pasan por r_lin; eso es solo `distxlin`). Falta saber
+      cómo están cableadas en tu diagrama y decidir (ver entrada 7).
 - [ ] Barridos de parámetros: correr varias variantes y superponerlas
       ("mover todo y ver qué da"). Puede salir de `02_simulacion.py`.
 - [ ] ¿Escalar los coeficientes hidrodinámicos con ρ/ρ_CFD al cambiar
       `rho`? Hoy no se escalan.
-- [ ] Verificar el bloque que arma el vector de restauración.
-- [ ] Confirmar `BUOY_SIGN` y los demás valores marcados CONFIRMAR
-      (cadenas de actuadores en `[actuadores]`).
+- [ ] Confirmar `BUOY_SIGN` (convención de la FSM V2 → VBD).
+- [ ] Pasar al archivo de configuración las ganancias de control y el
+      moldeado de referencias (cuando lleguen tus controladores).
 - [ ] Script de waypoints: pitch de cada inmersión como dato de la misión
       (sin pitch automático en el VBD).
 - [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
@@ -45,6 +49,64 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (7) — Restauración verificada; modo control en la simulación manual
+
+### Vector de restauración
+
+El autor proporcionó su función (guardada en
+`referencia_simulink/fcn_restauracion.m`): es el g(η) de Fossen. El port
+calcula −g(η) con fuerzas físicas y lo suma al lado derecho. Verificado
+con 2000 casos al azar: diferencia 1e-13. Con esto, todo el modelo físico
+del perfil `simulink` está comparado contra Simulink. Detalle en
+[MODELO.md](MODELO.md), sección 2.7.
+
+### Cadenas de actuadores
+
+El autor confirmó que los valores (prefiltros, limitadores, TFs) son los de
+Simulink; se quitaron las marcas CONFIRMAR.
+
+### Volumen desplazado
+
+`V_displaced` es el volumen con el pistón a la mitad de su carrera
+(Δx = 0); el VBD suma o resta ±0.503 L alrededor. Aclarado en el archivo
+de configuración y en [MODELO.md](MODELO.md), sección 2.4.
+
+### Modo control en `02_simulacion.py`
+
+- `MODO = "directo"` (tabla de actuadores) o `"control"` (tabla de
+  referencias: pitch, rumbo, dB, cg).
+- El control usa los controladores **provisionales** que ya existían
+  (`autopilot.py`: PID de pitch, P rumbo → roll, P roll) y el moldeado de
+  referencias de Simulink. Son los que usa la misión por waypoints.
+- Arreglo: el moldeado de referencias arrancaba siempre en 0 (un rumbo
+  inicial de 90° con referencia 90° hacía girar al planeador). Ahora
+  arranca en la actitud inicial (`make_ref_pipeline(init=...)`,
+  `make_attitude_controller(init_refs=...)`). Con init en 0 es idéntico a
+  antes.
+- `autopilot.piecewise_schedule`: tabla por tramos compartida por el lazo
+  abierto y las referencias. La validación en lazo abierto da exactamente
+  lo mismo (0.0).
+- Prueba: pitch_ref −25° → −25.0°; rumbo 0° → 45° en ~60 s con roll ~17°,
+  con ~3° de giro inicial al lado contrario. Ver
+  [SIMULACION.md](SIMULACION.md).
+
+### disturb_xg / disturb_yg
+
+El autor pensaba que pasan por r_lin. En su `Mbr+Ma fcn`:
+
+```matlab
+r_g=(m_s*r_s + m_lin*r_lin + m_rot*r_rot + m_p*r_p) / m;
+r_g(1)=r_g(1)+dist_xg;
+r_g(2)=r_g(2)+dist_yg;
+```
+
+y M se arma con `s(r_lin)`, `s(r_rot)`, etc., no con r_g. Así que dist_xg
+y dist_yg solo llegan a C_RB y a la restauración. Lo único que pasa por
+r_lin es `distxlin` (`fcn_r_lin`). El port hace exactamente eso. Pendiente:
+saber qué señal entra a dist_xg/dist_yg en el diagrama y decidir.
 
 ---
 

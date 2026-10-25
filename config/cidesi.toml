@@ -50,7 +50,10 @@ rho = 1000.0                # [kg/m^3] agua (fcn_VBD_actuator: 1000, dulce;
 #                             mar ~1025). OJO: los coeficientes de
 #                             [hidrodinamica] ya traen la rho del CFD y NO se
 #                             escalan al cambiar este valor.
-V_displaced = 0.058         # [m^3] volumen desplazado en neutro
+V_displaced = 0.058         # [m^3] volumen desplazado con el pistón del VBD a
+#                             la MITAD de su carrera (dx = 0, dB = 0). El VBD
+#                             suma o resta alrededor de esto: ±area*carrera/2
+#                             = ±0.503 L = ±4.93 N con rho = 1000.
 #                             (Simulink: W_total = 58*9.81 -> 58 kg / 1000)
 
 
@@ -67,6 +70,9 @@ vbd_rate = 0.01             # NO SE USA (la tasa es actuadores.vbd_rate_N)
 [actuadores]                # sim.py::move_actuators
 # -----------------------------------------------------------------------------
 # Cada canal: [prefiltro] -> [limitador de tasa] -> [FT principal] -> salida.
+# Verificados contra Simulink (autor, 2026-10-24). Son los prefiltros de los
+# ACTUADORES; el moldeado de las referencias de control es otro
+# (sim.py::make_ref_pipeline).
 # FT continuas tal cual los bloques Transfer Fcn:
 #   400/(s^2+30s+400)  ->  { num = [400.0], den = [1.0, 30.0, 400.0] }
 # Se discretizan (ZOH exacto) con el dt del simulador al cargar.
@@ -74,12 +80,12 @@ mass_rate = 0.008                                    # [m/s] masa móvil
 mass_tf = { num = [400.0], den = [1.0, 30.0, 400.0] }
 
 rot_pre_tf = { num = [1.0], den = [0.1, 1.0] }       # prefiltro (ayuda numérica)
-rot_rate = 0.5                                       # [rad/s]  CONFIRMAR
+rot_rate = 0.5                                       # [rad/s]
 rot_tf = { num = [400.0], den = [1.0, 30.0, 400.0] }
 
 vbd_pre_tf = { num = [1.0], den = [0.2, 1.0] }       # prefiltro (ayuda numérica)
-vbd_rate_N = 0.5                                     # [N/s]    CONFIRMAR
-vbd_tf = { num = [1.0], den = [2.0, 1.0] }           # CONFIRMAR
+vbd_rate_N = 0.5                                     # [N/s]
+vbd_tf = { num = [1.0], den = [2.0, 1.0] }
 
 
 # -----------------------------------------------------------------------------

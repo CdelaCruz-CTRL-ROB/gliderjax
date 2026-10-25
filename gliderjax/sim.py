@@ -87,7 +87,7 @@ def make_ref_pipeline(dt,
                       yaw_rate=0.03,   yaw_tf=([1.0], [5.0, 1.0]),
                       roll_rate=0.1,   roll_tf=([1.0], [5.0, 1.0]),
                       bypass_roll=True, bypass_pitch=False, bypass_yaw=False,
-                      bypass_all=False):
+                      bypass_all=False, init=(0.0, 0.0, 0.0)):
     """REFERENCE shaping (distinct from the actuator chains!):
         raw ref -> [rate limiter] -> [main TF] -> shaped ref
     Simulink values: pitch +-0.1 rad/s -> 1/(5s+1); yaw +-0.03 rad/s ->
@@ -101,6 +101,9 @@ def make_ref_pipeline(dt,
 
     All arguments are CONTINUOUS-time (rad/s rates, num/den TFs); the exact
     discrete forms are computed once here at build time.
+    init = (pitch, yaw, roll) [rad]: the returned state0 is already settled
+    at these values (e.g. the initial attitude), so the shaped references
+    start there instead of ramping from 0.
 
     Returns (state0, step):
         new_state, [pitch_s, yaw_s, roll_s] = step(state, [pitch, yaw, roll])
@@ -118,7 +121,11 @@ def make_ref_pipeline(dt,
     chans = [build(pitch_rate, pitch_tf, bypass_pitch),
              build(yaw_rate, yaw_tf, bypass_yaw),
              build(roll_rate, roll_tf, bypass_roll)]
-    state0 = jnp.zeros((3, 3))                 # per channel: [rl, main0, main1]
+    # per channel: [rl, main0, main1], settled at init (zeros if init = 0)
+    state0 = jnp.stack([
+        jnp.concatenate([jnp.array([v]),
+                         jnp.linalg.solve(jnp.eye(2) - A, B * v)])
+        for v, (_, A, B, _) in zip(init, chans)])
 
     def step(s, raw):
         outs, ns = [], []

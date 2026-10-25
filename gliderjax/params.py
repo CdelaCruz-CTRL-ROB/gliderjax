@@ -69,14 +69,14 @@ class GliderParams(NamedTuple):
     rotpre_a: jnp.ndarray      # rotary prefilter 1-state ZOH (scalars a,b,c)
     rotpre_b: jnp.ndarray
     rotpre_c: jnp.ndarray
-    rot_rate: jnp.ndarray      # [rad/s]                          # <-- CONFIRM
+    rot_rate: jnp.ndarray      # [rad/s]
     rot_A: jnp.ndarray         # (2,2) rotary main TF
     rot_B: jnp.ndarray
     rot_C: jnp.ndarray
     vbdpre_a: jnp.ndarray      # VBD prefilter (Simulink helper 1/(0.2s+1))
     vbdpre_b: jnp.ndarray
     vbdpre_c: jnp.ndarray
-    vbd_rate_N: jnp.ndarray    # [N/s] rate limit on dB signal    # <-- CONFIRM
+    vbd_rate_N: jnp.ndarray    # [N/s] rate limit on dB signal
     vbd_A: jnp.ndarray         # (2,2) VBD main TF (1/(2s+1) padded)
     vbd_B: jnp.ndarray
     vbd_C: jnp.ndarray
