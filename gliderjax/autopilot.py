@@ -14,8 +14,9 @@ Three modes, one architecture (all compatible with make_simulator):
   WAYPOINT        make_waypoint_controller(mission):
                   full V2 FSM -> reference shaping -> attitude loops
 
-roll_control is the author's simplified Simulink roll PID. pitch_control
-and yaw_control are still PLACEHOLDERS (working, but NOT the Simulink
+roll_control is the author's roll law (nonlinear PID with gravity
+compensation; the d_phi, m_phi and Sigma_psi terms are not in yet).
+pitch_control and yaw_control are still PLACEHOLDERS (working, but NOT the Simulink
 Pitch_control / Yaw_control blocks) -- the functions to replace. Each one
 gets N_MEM numbers of memory (integrators, previous values, filter states)
 carried between calls, and the reference together with its rate
@@ -46,9 +47,9 @@ KP_P, KD_P, KI_P = 0.015, 0.08, 0.005       # pitch PID (x_g units / rad)
 I_MAX_P = 0.005                              # [m of x_g] max |integral term|
 K_YAW = 1.2                                  # yaw err -> roll_ref [rad/rad]
 ROLL_MAX = 0.45                              # [rad] roll_ref saturation
-KP_R, KD_R, KI_R = 0.008, 0.0, 0.01          # roll PID (y_g units / rad);
-#                                              KD_R: 0*0.01 in Simulink (off)
-I_MAX_R = 0.004                              # [m of y_g] max |integral term|
+KP_R, KD_R, KI_R = 0.008, 0.0, 0.01          # roll PID (m of u / rad);
+#                                              Simulink values; KD_R: 0*0.01
+I_MAX_R = 0.004                              # [m of u] max |integral term|
 BUOY_SIGN = -1.0
 # BUOY_SIGN maps the FSM's V2 convention (Buoy_ref: +3 dive, -3 climb) to the
 # VBD block's physical dB_ref (negative dB -> less buoyant -> dive).
@@ -82,15 +83,21 @@ def euler_rates(x):
     return T_euler(x[3], x[4]) @ x[9:12]
 
 
+def nominal_mass(params):
+    """(m_tot, z_g0) of the known masses, as the controllers see them:
+    no m_dist, rotating mass at gamma = 0."""
+    m_tot = params.m_static + params.m_lin + params.m_rot + params.m_pist
+    zg0 = (params.m_static * params.r_static[2] + params.m_lin * params.r_lin0[2]
+           + params.m_rot * params.R_rot) / m_tot
+    return m_tot, zg0
+
+
 def pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt):
     """PLACEHOLDER pitch PID -> moving mass. Returns (rc_cmd [m], mem).
     mem[0] = integral term KI_P * int(e) [m of x_g], limited to +-I_MAX_P."""
     th = x[4]
     th_dot = euler_rates(x)[1]
-    # gravity feedforward derived from the parameters
-    m_tot = params.m_static + params.m_lin + params.m_rot + params.m_pist
-    zg0 = (params.m_static * params.r_static[2] + params.m_lin * params.r_lin0[2]
-           + params.m_rot * params.R_rot) / m_tot
+    m_tot, zg0 = nominal_mass(params)     # for the gravity feedforward
     e = th - pitch_ref
     de = th_dot - pitch_ref_dot
     integ = jnp.clip(mem[0] + KI_P * e * dt, -I_MAX_P, I_MAX_P)
@@ -101,22 +108,25 @@ def pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt):
 
 
 def roll_control(x, params, roll_ref, roll_ref_dot, mem, dt):
-    """Roll PID (author's simplified Simulink PID) -> lateral CG y_g ->
-    rotating mass. Returns (gamma_cmd [rad], mem).
-    mem[0] = integral term KI_R * int(e) [m of y_g], limited to +-I_MAX_R.
-    e = ref - measured (opposite to pitch): y_g > 0 rolls the vehicle to +phi
-    (roll moment +W y_g cos(phi) cos(th)), while x_g > 0 pitches it to -th."""
+    """Author's roll law, nonlinear PID with gravity compensation part
+    (without the -d_phi/W phi_dot, -m_phi/W phi_dd_d and Sigma_psi terms):
+        u = (1/cos phi) (KP e + KD e_dot + KI int(e) - z_g sin phi)
+    -> rotating mass. Returns (gamma_cmd [rad], mem).
+    mem[0] = integral term KI_R * int(e) [m of u], limited to +-I_MAX_R.
+    u is the design's "y_g": lateral CG shift to PORT, i.e. -y_g of the body
+    frame (the way the rotating mass moves for gamma > 0). With it roll has
+    the same form as pitch, M_x = -W cos(th) (z_g sin(phi) + u cos(phi)),
+    and e = measured - ref works with positive gains. See docs/DISENO_ROLL.md."""
     phi = x[3]
     phi_dot = euler_rates(x)[0]          # NOT p (body rate)
-    e = roll_ref - phi
-    de = roll_ref_dot - phi_dot
+    m_tot, zg0 = nominal_mass(params)
+    e = phi - roll_ref
+    de = phi_dot - roll_ref_dot
     integ = jnp.clip(mem[0] + KI_R * e * dt, -I_MAX_R, I_MAX_R)
-    yg_cmd = KP_R * e + KD_R * de + integ
-    # y_g -> gamma (author's fcn): y_rot = -R_rot sin(gamma), so
-    # y_g = -m_rot R_rot sin(gamma) / m_tot
-    m_tot = params.m_static + params.m_lin + params.m_rot + params.m_pist
-    sin_gamma = jnp.clip(-yg_cmd * m_tot / (params.m_rot * params.R_rot),
-                         -1.0, 1.0)
+    u = (1.0 / jnp.cos(phi)) * (KP_R * e + KD_R * de + integ
+                                - zg0 * jnp.sin(phi))
+    # u -> gamma: y_rot = -R_rot sin(gamma), so u = -y_g = m_rot R_rot sin(gamma) / m_tot
+    sin_gamma = jnp.clip(u * m_tot / (params.m_rot * params.R_rot), -1.0, 1.0)
     return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 
 

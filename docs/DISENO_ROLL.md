@@ -1,10 +1,14 @@
 # Diseño del control de roll: signo del error y variable de control
 
-Creado el 2026-10-24. **Pendiente**, para trabajarlo en otra sesión. El
-simulador funciona tal como está hoy; este documento solo plantea el tema
-de diseño.
+Creado el 2026-10-24. **Pendiente**, para trabajarlo en otra sesión.
 
-## 1. Resumen
+> **Actualización (mismo día):** el autor pasó su ley de roll completa. La
+> pregunta 1 quedó resuelta y la parte de PID no lineal con compensación de
+> gravedad ya está implementada. Ver la sección 8. Las secciones 1 a 5
+> describen el estado anterior (PID simplificado de Simulink), y se dejan
+> como contexto.
+
+## 1. Resumen (estado anterior)
 
 - El PID de roll del autor ya está en el simulador y funciona: llega a la
   referencia sin error en estado estacionario.
@@ -64,7 +68,7 @@ sin γ = u_φ · m_tot / (m_rot·R_rot)
 Es exactamente la forma de pitch (con un factor cos θ), y sin γ ya no
 lleva el signo menos.
 
-## 4. Lo que está implementado hoy
+## 4. Lo que estaba implementado (PID simplificado de Simulink)
 
 PID del autor en Simulink:
 
@@ -88,8 +92,8 @@ function gamma = fcn(yg)
 end
 ```
 
-En el simulador (`gliderjax/autopilot.py::roll_control`, línea 103;
-ganancias en las líneas 49-51):
+En el simulador (`gliderjax/autopilot.py::roll_control`, versión del commit
+f68a962):
 
 ```python
 phi = x[3]
@@ -111,7 +115,7 @@ return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 En Simulink los dos signos menos (referencia − medido y el −y_g de la
 `fcn`) se cancelan: sin γ = K·(φ − φ_ref)·m_tot/(m_rot·R_rot).
 
-Como referencia, el PID de pitch del simulador (línea 85), que el autor
+Como referencia, el PID de pitch del simulador (`pitch_control`), que el autor
 considera equivalente a su PID no lineal:
 
 ```
@@ -158,16 +162,11 @@ return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 
 ## 6. Preguntas para la sesión de diseño
 
-1. **¿Cuál es la entrada de roll en el diseño del autor?** γ, sin γ, y_g
-   u otra.
-   - Si es γ, sin γ o "−y_g": el diseño está bien. Se implementa con esa
-     variable (sección 5) y se declara el cambio de variable.
-   - Si el diseño escribe φ̈ = … + (W/I)·y_g con e = φ − φ_ref y llega a
-     y_g = +K·e: hay un error de signo en el diseño (es la variante que
-     diverge).
-2. ¿Se agrega a roll la compensación de gravedad, como en pitch?
-   u_φ = (1/cos φ)·(KP·e + KD·ė + I − z_g·sin φ). Hoy el integrador la
-   suple. Puede importar para la demostración.
+1. ~~¿Cuál es la entrada de roll en el diseño del autor?~~ **Resuelta**
+   (sección 8): el y_g de la ley es el desplazamiento hacia babor,
+   u = −y_g del marco del cuerpo. El diseño es consistente.
+2. ~~¿Se agrega a roll la compensación de gravedad?~~ **Sí**, es parte de
+   la ley del autor; ya está implementada (sección 8).
 3. Factor cos θ en el momento de roll: con θ = ±25° la ganancia efectiva
    baja ~9 %. ¿Se compensa?
 4. Parte D: con KD encendida y una referencia en escalón (modo
@@ -179,6 +178,16 @@ return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 6. Validar contra una corrida de Simulink exportada a CSV (ver
    [VALIDACION.md](VALIDACION.md)).
 
+7. Faltan los términos −(d_φ/W)·φ̇, −(m_φ/W)·φ̈_d y Σ_ψ de la ley
+   completa (sección 8). ¿Qué son d_φ, m_φ y Σ_ψ en el modelo del
+   simulador? φ̈_d necesita una referencia de roll suave (hoy el modo
+   `pitch_roll` la da en escalón).
+8. Con la compensación de gravedad, las ganancias de Simulink dan más
+   sobrepaso (sección 8): hay que sintonizar de nuevo.
+9. z_g depende de γ (la masa rotatoria sube al girar: z_rot = R·cos γ).
+   El controlador usa z_g con γ = 0; con γ = 17° la diferencia es 0.27 mm
+   de 6.93 (4 %). ¿Importa?
+
 ## 7. Cómo probar
 
 - `escenarios/02_simulacion.py`: `MODO = "pitch_roll"`, tabla
@@ -186,4 +195,75 @@ return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 - La figura `09_control.png` muestra roll contra la referencia, γ (comando
   y posición) y `mem[0]` de roll con ±`I_MAX_R`.
 - Contexto: [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), secciones 2 y 5;
-  [BITACORA.md](BITACORA.md), entradas 12 y 13.
+  [BITACORA.md](BITACORA.md), entradas 12 a 14.
+
+## 8. Ley del autor (2026-10-24)
+
+Ley completa:
+
+```latex
+y_g = \frac{1}{\cos(\phi)} \left[K_{P,\phi} e_\phi + K_{D,\phi} \dot{e}_\phi
+      + K_{I,\phi} \int e_\phi - \frac{d_\phi}{W}\dot{\phi} - z_g \sin(\phi)
+      - \frac{m_\phi}{W}\ddot{\phi}_d + \Sigma_{\psi} \right]
+```
+
+Implementada por ahora solo la parte de **PID no lineal con compensación
+de gravedad**:
+
+```
+e  = φ − φ_ref                        (medido − referencia, igual que pitch)
+ė  = φ̇ − φ̇_ref                        (φ̇ de la cinemática, NO p)
+I  = sat(I + KI·e·dt, ±I_MAX)
+u  = (1/cos φ) · (KP·e + KD·ė + I − z_g·sin φ)       ("y_g" de la ley)
+sin γ = sat(u · m_tot / (m_rot·R_rot), ±1)
+```
+
+### El signo de y_g en la ley
+
+El término de gravedad lo decide. Con e = 0 e I = 0 la ley da
+y_g = −z_g·tan φ. Pero para sostener un roll φ > 0 el CG tiene que ir a
+**estribor**, y_g(cuerpo) = +z_g·tan φ (sección 3: M_x = 0 ⇔
+y_g·cos φ = z_g·sin φ). Entonces el y_g de la ley apunta a **babor**: es
+u = −y_g del marco del cuerpo.
+
+Con esa lectura, el roll tiene la misma forma que pitch,
+M_x = −W·cos θ·(z_g·sin φ + u·cos φ), y la ley cancela la gravedad. Por
+eso sin γ lleva signo **+** (la masa con γ > 0 va a babor). La `fcn` de
+Simulink lleva signo − porque allí y_g es el de estribor.
+
+Prueba: tomar la u de la ley como y_g de estribor (sin γ con signo −)
+diverge (roll −85°, γ en +90°). La compensación de gravedad, en lugar de
+cancelarse, se duplica.
+
+### Resultados con las ganancias de Simulink (KP 0.008, KD 0, KI 0.01, I_MAX 4 mm)
+
+Mismas pruebas que la sección 5:
+
+| Prueba | PID simplificado (Simulink) | Ley con compensación |
+|---|---|---|
+| Escalón 0 → 15°, bajada | pico 23.3°, ±0.5° desde t = 207 s | pico **35.6°**, ±0.5° desde t = 239 s |
+| Escalón 0 → −15°, subida | pico −23.3° | pico −35.6° |
+| Aporte integral, final | 1.8 mm (hace de compensación de gravedad) | 0.06 mm (ya no hace falta) |
+| Aporte integral, máximo | 3.9 mm | 4.0 mm (topado) |
+| Rumbo 0 → 45° | pasa 44° en t = 249 s; roll máx 26.4° | pasa 44° en t = 249 s; roll máx 27.7° |
+
+**Por qué empeora con las mismas ganancias:** el PID simplificado tenía
+"gratis" la rigidez natural del péndulo, W·z_g (z_g = 6.9 mm), sumada a
+KP = 8 mm. La ley la cancela, y queda solo KP: la rigidez baja a la mitad
+y la integral (igual de rápida) domina la respuesta.
+
+Algunas combinaciones (escalón de 15°, bajada), solo como orientación para
+la sintonización:
+
+| KP | KD | KI | Pico | ±0.5° desde | Aporte integral máx. |
+|---|---|---|---|---|---|
+| 0.008 | 0 | 0.01 | 35.6° | t = 239 s | 4.0 mm (topado) |
+| 0.015 | 0 | 0.01 | 33.0° | t = 213 s | 3.9 mm |
+| 0.015 | 0 | 0.003 | 21.1° | t = 211 s | 1.2 mm |
+| 0.015 | 0.01 | 0.003 | 19.5° | t = 212 s | 1.2 mm |
+| 0.008 | 0.01 | 0.01 | 28.2° | t = 227 s | 3.9 mm |
+
+Aun con KD el sobrepaso no baja de ~30 %. Candidatos a revisar: la razón
+de cambio de la masa rotatoria (0.5 rad/s: llevar γ a −40° tarda ~1.4 s),
+el periodo de control de 0.25 s contra un roll con periodo de ~3 s, y la
+referencia en escalón.

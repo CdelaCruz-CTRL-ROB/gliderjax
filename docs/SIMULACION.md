@@ -121,20 +121,22 @@ tabla; rc y γ (comando y posición); y `mem[0]` de los lazos de pitch y
 roll (el aporte integral, con líneas en ±`I_MAX_P` y ±`I_MAX_R`).
 
 Pruebas (2026-10-24, controlador a 0.25 s; pitch con θ̇ − θ̇_ref, aporte
-integral con tope y `KI_P = 0.005`; roll con el PID del autor; bitácora
-entradas 11 a 13), arrancando del reposo a 200 m con actuadores en neutro:
+integral con tope y `KI_P = 0.005`; roll con la ley del autor (PID no
+lineal con compensación de gravedad, ganancias de Simulink); bitácora
+entradas 11 a 14), arrancando del reposo a 200 m con actuadores en neutro:
 
 - **`pitch_roll`**, pitch_ref −25°, roll_ref 0° → 15° en t = 200 s:
   - pitch sobrepasa a −26.2° y se asienta en −25.000° (±0.5° desde
     t = 38 s);
-  - roll sobrepasa a **23.3°**, oscila (periodo ~3 s) y queda en 15.000°
-    (±0.5° desde t = 207 s); γ llega a −48° y se queda en −17.3°;
-  - aporte integral de roll: máximo 3.9 mm (tope 4 mm), final 1.8 mm;
+  - roll sobrepasa a **35.6°**, oscila y queda en 15.000° (±0.5° desde
+    t = 239 s); γ llega a −70° y se queda en −17.3°;
+  - aporte integral de roll: llega al tope (4 mm) y termina en 0.06 mm
+    (la gravedad ya la compensa la ley);
   - con roll sostenido de 15° el planeador gira (+0.99 °/s).
 - **`rumbo`**, rumbo_ref 0° → 45° en t = 200 s:
   - el rumbo pasa de 44° en t = 249 s y se queda en 45.0°; roll máximo
-    26.4° (la referencia de roll satura en 25.8°);
-  - al meter el roll, primero gira 2.4° al lado contrario;
+    27.7° (la referencia de roll satura en 25.8°);
+  - al meter el roll, primero gira 2.7° al lado contrario;
   - pitch se mantiene entre −25.4° y −24.7° durante el giro.
 - Con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
   (sin giro falso).

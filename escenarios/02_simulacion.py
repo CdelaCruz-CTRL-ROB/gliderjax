@@ -343,7 +343,7 @@ def figura_control():
     ax[4].set_ylabel("gamma [deg]")
     # mem[0] de pitch y de roll: el aporte integral (x_g, y_g) y su tope
     for i, lazo, tope, c in ((0, "pitch (x_g)", "I_MAX_P", "C0"),
-                             (4, "roll (y_g)", "I_MAX_R", "C1")):
+                             (4, "roll (u = -y_g)", "I_MAX_R", "C1")):
         ax[5].plot(t, tel["ctrl_state"][:, i] * 1000, color=c,
                    label=f"mem[0] de {lazo}")
         lim = getattr(autopilot, tope, None)

@@ -45,9 +45,11 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       sin él).
 - [ ] DONE con flotabilidad positiva (confirmar contra V2).
 - [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
-- [ ] Diseño de roll: signo del error y variable de control (y_g contra
-      u_φ = −y_g); planteado en [DISENO_ROLL.md](DISENO_ROLL.md) para otra
-      sesión. Mientras tanto se queda como en Simulink (ref − medido).
+- [x] Diseño de roll: signo del error y variable de control. Resuelto con
+      la ley del autor: su y_g es u = −y_g (entrada 14).
+- [ ] Roll: términos −(d_φ/W)·φ̇, −(m_φ/W)·φ̈_d y Σ_ψ de la ley; sintonizar
+      con la compensación de gravedad (ver [DISENO_ROLL.md](DISENO_ROLL.md),
+      sección 8).
 - [ ] Reemplazar controladores provisionales por los bloques de Simulink:
       roll listo (entrada 13); pitch se queda el provisional (entrada 12);
       falta `Yaw_control`.
@@ -55,6 +57,36 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (14) — Roll: ley del autor (PID no lineal + compensación de gravedad)
+
+El autor pasó su ley de roll completa:
+
+```
+y_g = (1/cos φ)·[KP·e + KD·ė + KI·∫e − (d_φ/W)·φ̇ − z_g·sin φ − (m_φ/W)·φ̈_d + Σ_ψ]
+```
+
+Pidió implementar solo la parte de PID no lineal con compensación de
+gravedad.
+
+- `roll_control`: e = φ − φ_ref (medido − ref, como pitch),
+  u = (1/cos φ)·(KP·e + KD·ė + I − z_g·sin φ), sin γ = +u·m_tot/(m_rot·R).
+  Ganancias de Simulink por ahora (0.008, 0, 0.01; tope 4 mm).
+- **El y_g de la ley es hacia babor** (u = −y_g del cuerpo). Lo decide el
+  término −z_g·sin φ: sostener φ > 0 necesita el CG a estribor, y la ley
+  da −z_g·tan φ. Con esa lectura el diseño es consistente y resuelve el
+  pendiente de [DISENO_ROLL.md](DISENO_ROLL.md). Tomarlo como y_g de
+  estribor diverge (−85°).
+- `nominal_mass(params)`: m_tot y z_g0 de las masas conocidas, compartido
+  por pitch y roll. Pitch queda igual (diferencia 0.0).
+- Resultados con las ganancias de Simulink (escalón 15°): pico 35.6°
+  (antes 23.3° con el PID simplificado). La ley cancela la rigidez del
+  péndulo (W·z_g, z_g = 6.9 mm) que el PID simplificado tenía gratis, y
+  con KP = 8 mm la rigidez baja a la mitad. El aporte integral final baja
+  de 1.8 a 0.06 mm. Tabla de ganancias de prueba en DISENO_ROLL.md §8.
+- Misión de waypoints: completa (5/5).
 
 ---
 
