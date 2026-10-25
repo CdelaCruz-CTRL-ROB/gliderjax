@@ -23,8 +23,8 @@ p = cidesi_defaults()          # values from config/cidesi.toml (edit there)
 # To change a parameter only for this test, override here.
 # GliderParams is immutable; ._replace() returns a modified copy. Examples:
 #
-# p = p._replace(disturb_xg=0.01)                  # 1 cm CG disturbance (your
-#                                               #   parametric perturbation)
+# p = p._replace(disturb_xlin=0.005)             # 5 mm virtual-zero error
+# p = p._replace(m_dist=0.5, r_dist=jnp.array([0.3, 0.0, 0.0]))  # 0.5 kg mass
 # p = p._replace(current_n=jnp.array([0.1, -0.05, 0.0]))   # NED current [m/s]
 # p = p._replace(KM=p.KM * 1.10)                # +10% pitch stiffness
 #
@@ -59,10 +59,6 @@ cfg = ModelConfig(
     use_rot_damping=True,
     #   Your D_body rotational damping (4p+24p|p|, 10q+50q|q|, 100r|r|).
     #   False only for pure-potential-flow academic tests.
-    replicate_disturb_wiring=True,
-    #   True  -> disturb_xg/disturb_yg enter restoring + C_RB but NOT M_RB,
-    #            byte-for-byte your Simulink wiring (use for validation).
-    #   False -> physically consistent version (disturbed CG everywhere).
 )
 
 # =============================================================================

@@ -31,8 +31,9 @@ Imprime:
 |---|---|
 | MASAS | cada masa con su posición para esos actuadores; masa total y peso |
 | FLOTABILIDAD | B con dB = 0 (ρ·g·V_displaced) y con el dB pedido; flotabilidad neta; **V_displaced para ser neutro**; si el VBD alcanza a compensar |
-| CENTROS | CG (con `disturb_xg/yg`), CB, BG y si es estable |
-| CERO VIRTUAL | posición de la masa móvil para pitch 0 en reposo (dB = 0, γ = 0), comparada con `r_lin0` del archivo, y el rc que hace falta; γ para roll 0 |
+| CENTROS | CG (con perturbaciones), CB, BG y si es estable |
+| CERO VIRTUAL NOMINAL | sin perturbaciones: posición de la masa móvil para pitch 0 en reposo (dB = 0, γ = 0), comparada con `r_lin0` del archivo, y el rc que hace falta; γ para roll 0 |
+| EFECTO DE LAS PERTURBACIONES | solo si `disturb_xlin` o `m_dist` ≠ 0: rc para pitch 0, pitch en reposo y γ para roll 0, nominal contra real |
 | EQUILIBRIO | roll y pitch en reposo con los actuadores pedidos |
 
 Figura `out/00_balance_estatico/curvas_reposo.png`: pitch en reposo vs rc
@@ -72,7 +73,7 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 | | `ORIGEN_GEO` | lon, lat [°]; solo si el perfil usa geodesia |
 | 4 Actuadores | `MODO` | `"directo"`: la tabla da la posición de los actuadores; `"control"`: la tabla da referencias y los controladores (provisionales) mueven rc y γ |
 | | `FASES` | modo directo: (t_inicio, rc [m], γ [°], dB [N], nombre); una fila = constante |
-| | `FASES_CONTROL` | modo control: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], cg, nombre). cg: +1 bajando, −1 subiendo, 0 sin control de rumbo |
+| | `FASES_CONTROL` | modo control: (t_inicio, pitch_ref [°], rumbo_ref [°], dB [N], signo_giro, nombre). signo_giro: +1 bajando, −1 subiendo, 0 sin control de rumbo |
 | | `PERIODO_CONTROL` | cada cuánto corre el controlador [s], múltiplo de `DT` |
 | | `ACTUADORES_INICIO` | `"en_posicion"`: arrancan ya en la primera fila (modo control: rc = 0, γ = 0 y el dB de la primera fila); `"neutro"`: arrancan en 0 y se mueven con su dinámica |
 | 5 Salida | `FIGURAS` | lista de figuras (comentar las que no quieras) |
@@ -104,7 +105,7 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 ### Modo control
 
 Usa los controladores **provisionales** de `autopilot.py` (no tus bloques
-de Simulink): PID de pitch → rc, P de rumbo → roll de referencia (× cg),
+de Simulink): PID de pitch → rc, P de rumbo → roll de referencia (× signo de giro),
 P de roll → γ. Las referencias pasan por el moldeado de Simulink (pitch
 ±0.1 rad/s y 1/(5s+1); rumbo ±0.03 rad/s y 1/(5s+1)), que arranca en la
 actitud inicial. El dB va directo al VBD.

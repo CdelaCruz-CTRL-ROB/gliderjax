@@ -124,10 +124,11 @@ class GliderParams(NamedTuple):
     gps_sigma_m: jnp.ndarray   # horizontal fix noise 1-sigma [m] (0 = ideal)
     gps_gate_depth: jnp.ndarray  # fixes available only when z < this [m]
     # ----- disturbances & environment ---------------------------------------
-    disturb_xg: jnp.ndarray    # CG disturbance [m] (restoring + coriolis
-    disturb_yg: jnp.ndarray    #  only, replicating the Simulink wiring)
-    disturb_xlin: jnp.ndarray  # moving-mass position disturbance [m]: added
-    #                            to r_lin, so it enters M, I_b and r_g
+    disturb_xlin: jnp.ndarray  # virtual-zero calibration error of the moving
+    #                            mass [m]: added to r_lin (M, I_b, r_g, W...),
+    #                            unknown to the controller
+    m_dist: jnp.ndarray        # unmodeled point mass [kg] (0 = none): enters
+    r_dist: jnp.ndarray        #  M, I_b, r_g and weight; no displaced volume
     current_n: jnp.ndarray
 
 
@@ -146,8 +147,6 @@ class ModelConfig:
     #                                     stations + added mass + entry/radiation)
     use_crossflow: bool = True          # large-incidence quadratic drag blend
     use_geodesy: bool = True            # integrate ECEF truth position
-    replicate_disturb_wiring: bool = True  # disturb_xg/yg enter C_RB +
-    #                                        restoring, NOT M_RB (Simulink)
 
 
 def zoh_tf(num, den, dt, n_states):

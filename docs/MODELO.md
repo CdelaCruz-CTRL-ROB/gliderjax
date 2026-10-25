@@ -24,7 +24,7 @@ cada uno. Los switches están en el mismo archivo, como perfiles
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), **verificado** (sección 2.4) | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
 | Cadenas de actuadores (prefiltros, limitadores de tasa, TFs) | Simulink, **verificado por el autor** (2026-10-24) | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Simulink, **verificado** (sección 2.7) | `dynamics.py::tau_restoring` | siempre |
-| Perturbación de CG (disturb_xg, disturb_yg) | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_disturb_wiring=True` |
+| Masa de perturbación (m_dist en r_dist): masa real no modelada | **Agregado** (decisión del autor, reemplaza a dist_xg/dist_yg de Simulink) | `dynamics.py::mass_geometry` | siempre (m_dist = 0 = sin perturbación) |
 | Perturbación de la masa móvil (disturb_xlin): error en el cero virtual del actuador | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
 | Superficie de 2 puntos (B_scale, Δx_b) | Simulink (fcn_buoyancy_surface), **verificado** (sección 2.6) | `dynamics.py::surface_two_point` | `surface_model="simulink"` |
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
@@ -53,18 +53,22 @@ tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 
 ### Diferencias con Simulink que se dejan a propósito
 
-1. **Inercia de la masa rotatoria**: el port usa `R·I·Rᵀ`, la consistente
+1. **Perturbaciones**: no se usan `dist_xg`/`dist_yg` (se sumaban a r_g
+   después de armar M: el CG se movía sin que se moviera ninguna masa).
+   Quedan dos perturbaciones, que el control no conoce: `disturb_xlin`
+   (error de calibración del cero virtual, como tu `distxlin`) y una masa
+   de perturbación `m_dist` en `r_dist`. Sección 2.5.
+2. **Inercia de la masa rotatoria**: el port usa `R·I·Rᵀ`, la consistente
    con la posición de la masa; tu Simulink tiene `Rᵀ·I·R` (error). Decisión
    del autor, 2026-10-24: no replicar el error. Sección 2.2.
-2. **Masa añadida**: solo la diagonal; tus acoplamientos de 0.1 y 0.01
+3. **Masa añadida**: solo la diagonal; tus acoplamientos de 0.1 y 0.01
    van en 0. Sección 2.2.
-3. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
+4. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
    no se porta. El pitch de cada inmersión lo da la misión. Sección 2.4.
 
 Con esto, **todo el modelo físico del perfil `simulink` está comparado
-contra tu Simulink** (2026-10-24). Queda abierto cómo entran
-`disturb_xg`/`disturb_yg` (sección 2.2) y los controladores, que todavía
-son provisionales ([CONTROL_Y_MISION.md](CONTROL_Y_MISION.md)).
+contra tu Simulink** (2026-10-24). Lo que sigue provisional son los
+controladores ([CONTROL_Y_MISION.md](CONTROL_Y_MISION.md)).
 
 ## 2. Comparación con tus funciones de Simulink
 
@@ -106,8 +110,7 @@ Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
 | Inercia de la masa rotatoria en cuerpo | `Rot_xᵀ·I_rot·Rot_x` | `Rx·I_rot·Rxᵀ` | **no, a propósito**: ver abajo |
 | M_RB | `[m·I, −Σ mᵢ s(rᵢ); Σ mᵢ s(rᵢ), I_b]` | `M_rigid(m, r_g, I_b)`, con `m·s(r_g) = Σ mᵢ s(rᵢ)` | sí |
 | I_b | `Σ (Iᵢ − mᵢ s(rᵢ)²)` | `Σ about_CO(Iᵢ, mᵢ, rᵢ)` | sí |
-| r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `r_g_dist` (con `disturb_xg`, `disturb_yg`) | sí |
-| dist en M e I_b | no entra (M se arma con posiciones sin perturbar) | `replicate_disturb_wiring=True` | sí |
+| r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `Σ mᵢ rᵢ / m`, incluyendo la masa de perturbación | **no, a propósito**: sección 2.5 |
 | MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) en todos los acoplamientos | solo la diagonal | **no, a propósito**: ver abajo |
 | CA (acoplamiento traslación–rotación de M_A) | 0 (`2.57*0`) | 0 | sí |
 | M = M_RB + M_A | sí | sí | sí |
@@ -172,7 +175,7 @@ Referencia:
 | Parte | Simulink | Port | ¿Igual? |
 |---|---|---|---|
 | C_RB | `[m S(ω), −m S(ω) S(r_g); m S(r_g) S(ω), −S(I_b ω)]` | `C_rigid`, misma matriz | sí |
-| r_g usado en C_RB | el de Mbr+Ma fcn (con dist) | `r_g_dist` | sí |
+| r_g usado en C_RB | el de Mbr+Ma fcn | el mismo r_g de M y de la restauración | sí (sin dist_xg/yg, sección 2.5) |
 | C_A | `[0, −S(a1); −S(a1), −S(a2)]`, a1 = MA·v₁ + CA·v₂, a2 = CAᵀ·v₁ + IA·v₂ | `C_added`, misma estructura | sí |
 | C_A en la ecuación | **anulado**: `C_total = C_RB + C_A*0` | apagado por defecto (`use_ca_*=False`) | sí |
 | Matriz usada en C_A si se enciende | MA, IA de Mbr+Ma fcn | `MA_hull` (otra matriz, no viene de Simulink) | no, pero apagado |
@@ -251,8 +254,34 @@ con distancia; por lo mismo, `dist_xg`, `dist_yg` → `disturb_xg`,
 **Qué representa** (autor, 2026-10-24): que rc no queda donde el control
 cree, es decir, el cero virtual del actuador está mal calculado. Como
 entra en r_lin, pasa por Mbr+Ma fcn y afecta todo: M, I_b, r_g y la
-restauración. A diferencia de `disturb_xg`/`disturb_yg`, que se suman a r_g
-después de armar M.
+restauración. El control no la conoce (su compensación de gravedad usa
+`r_lin0` nominal).
+
+**Perturbaciones: decisión (autor, 2026-10-24).** Tu Simulink tenía dos
+tipos:
+
+| Simulink | Qué hacía | Port |
+|---|---|---|
+| `distxlin` (fcn_r_lin) | mueve la masa móvil respecto a donde cree el control | **se queda**: `disturb_xlin` |
+| `dist_xg`, `dist_yg` (Mbr+Ma fcn) | se suman a r_g **después** de armar M: el CG se mueve sin que se mueva ninguna masa; M e I_b no se enteran | **se quita** |
+
+En su lugar, una perturbación real se modela como **masa de
+perturbación**: `m_dist` [kg] en `r_dist` [m] (`[perturbaciones]` del
+archivo de configuración).
+
+- Es una quinta masa puntual en `mass_geometry`: entra en M, I_b, r_g y el
+  peso, de forma consistente.
+- No desplaza agua: saca al planeador de neutro (`m_dist·g` de flotabilidad
+  negativa). Se puede compensar a mano con `V_displaced`, o dejarla para
+  ver el efecto.
+- No entra en el cero virtual nominal ni en el control.
+  `00_balance_estatico.py` muestra el cero nominal y, aparte, el efecto de
+  las perturbaciones.
+- Verificado: 0.7 kg puestos exactamente en la masa móvil (rc = 0) dan lo
+  mismo que m_lin + 0.7 kg (diferencia 1e-13).
+- Ejemplo (balance estático): 0.5 kg en x = 0.3 m y `disturb_xlin = 2 mm`
+  piden rc = −12.0 mm para pitch 0 (equivale a mover la masa móvil
+  0.15/15 = 10 mm, más los 2 mm); con rc = 0 el pitch en reposo es −24°.
 
 Ejemplo de su efecto: `disturb_xlin = 5 mm` en la prueba de validación lleva
 el pitch de bajada de −38.5° a −44.5° y el de subida de +36.6° a +29.1°.
@@ -417,8 +446,8 @@ bajar, negativa al subir).
 
 1. **Planta:** `KMR · sign(α)` en el momento de roll (`kmr_mode="signum"`,
    default). Como α > 0 al bajar y α < 0 al subir, el signo cambia.
-2. **Control:** la FSM entrega una ganancia de acoplamiento `cg`
-   (+1 en DIVE, −1 en CLIMB, 0 en los demás estados) que multiplica el roll
+2. **Control:** la FSM entrega el **signo de giro** (`turn_sign`: +1 en
+   DIVE, −1 en CLIMB, 0 en los demás estados) que multiplica el roll
    deseado en el lazo de yaw. Ver [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md).
 
 **Prueba (2026-10-24):** masa rotatoria fija en γ = +30° (roll a la
@@ -461,4 +490,3 @@ Cambiar cualquiera obliga a recompilar (~5–10 s).
 | `use_geodesy` | false | true | posición ECEF (necesaria para la misión con GPS) |
 | `use_ca_omega` | false | false | Coriolis de masa añadida (rotacional) |
 | `use_ca_translational` | false | false | bloque de Munk: **duplica** física ya incluida en el CFD |
-| `replicate_disturb_wiring` | true | true | la perturbación de CG (`disturb_xg`, `disturb_yg`) entra en restauración y C_RB pero no en M_RB, como en Simulink |

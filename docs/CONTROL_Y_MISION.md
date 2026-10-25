@@ -19,7 +19,7 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
   `autopilot.py::make_open_loop_controller`, usado en
   `escenarios/01_validacion_dinamica.py` (ver [VALIDACION.md](VALIDACION.md))
   y en `02_simulacion.py` con `MODO = "directo"`.
-- Controladores sin FSM (tabla de referencias de pitch, rumbo, dB y cg):
+- Controladores sin FSM (tabla de referencias de pitch, rumbo, dB y signo de giro):
   `autopilot.py::make_attitude_controller`, usado en `02_simulacion.py` con
   `MODO = "control"` (ver [SIMULACION.md](SIMULACION.md)). El moldeado de
   referencias arranca en la actitud inicial (`init_refs`), para que no haya
@@ -57,12 +57,13 @@ rc_cmd = m_tot · x_g / m_lin
 **Yaw: P** (`K_YAW = 1.2`)
 
 ```
-roll_ref = clip(K_YAW · wrap(ψ_ref − ψ), ±ROLL_MAX) · cg       ROLL_MAX = 0.45 rad (~26°)
+roll_ref = clip(K_YAW · wrap(ψ_ref − ψ), ±ROLL_MAX) · turn_sign       ROLL_MAX = 0.45 rad (~26°)
 ```
 
-`cg` viene de la FSM: +1 en DIVE, −1 en CLIMB, 0 en los demás estados.
-Invierte el sentido del giro entre bajada y subida (ver
-[MODELO.md](MODELO.md), sección 6). Con `cg = 0` no hay control de rumbo.
+`turn_sign` (signo de giro; antes se llamaba `cg`) viene de la FSM: +1 en
+DIVE, −1 en CLIMB, 0 en los demás estados. Invierte el sentido del giro
+entre bajada y subida (ver [MODELO.md](MODELO.md), sección 6). Con
+`turn_sign = 0` no hay control de rumbo.
 
 **Roll: P** (`K_ROLL = 2.0`)
 
@@ -97,7 +98,7 @@ Constantes en `navigation.py` (líneas 20-36):
 | `K_GLIDE` | 1.4 | razón de planeo supuesta |
 | `ALPHA_F` | 0.8 | filtro del estimador de deriva |
 
-| # | Estado | pitch_ref | yaw_ref | Buoy (V2) | cg | Sale cuando |
+| # | Estado | pitch_ref | yaw_ref | Buoy (V2) | signo de giro | Sale cuando |
 |---|---|---|---|---|---|---|
 | 1 | FIX | −63° | planeado | −3 (positiva) | 0 | pasan 30 s → SUB, o DONE si no quedan waypoints |
 | 2 | SUB | −35° | actual | +3 (negativa) | 0 | prof. > 2 m → DIVE |

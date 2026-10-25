@@ -87,8 +87,8 @@ def build_fsm(mission_lla=MISSION_TRIANGLE):
         i = jnp.clip(idx1.astype(jnp.int32) - 1, 0, NWP - 1)
         return WPS[i]
 
-    def out(pitch, yawr, buoy, cg, done):
-        return jnp.array([pitch, yawr, buoy, cg, done])
+    def out(pitch, yawr, buoy, turn_sign, done):
+        return jnp.array([pitch, yawr, buoy, turn_sign, done])
 
     # ---- branches: (carry, lla, depth, yaw, t) -> (carry', out5) -----------
     def s_fix_plan(c, lla, depth, yaw, t):

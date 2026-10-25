@@ -60,7 +60,7 @@ gráficas) y llaman a la simulación.
 | actuadores (FT, limitadores de tasa, saturaciones) | `config/cidesi.toml`, `[actuadores]` y `[masas]` |
 | volumen desplazado (neutralidad) y densidad del agua | `config/cidesi.toml`, `[flotabilidad]` (no sigue a las masas: revisar con `00_balance_estatico.py`) |
 | VBD (diámetro, carrera, estación del pistón) | `config/cidesi.toml`, `[vbd]` |
-| perturbaciones (CG, masa móvil) y corriente | `config/cidesi.toml`, `[perturbaciones]` |
+| perturbaciones (error del cero virtual, masa de perturbación) y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
 | perfil, solver, paso, duración, condiciones iniciales, actuadores | el script (`02_simulacion.py`, secciones 1 a 4) |
 | ganancias de los controladores (provisionales) | `gliderjax/autopilot.py`, líneas 32-37 |

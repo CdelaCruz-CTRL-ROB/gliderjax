@@ -77,10 +77,10 @@ FASES = [
 
 # --- modo "control": referencias ---
 #      pitch_ref [deg], rumbo_ref [deg] (yaw), dB [N] (va directo al VBD)
-#      cg: acoplamiento roll-giro: +1 bajando, -1 subiendo, 0 = sin control
-#          de rumbo (roll de referencia 0)
+#      signo_giro: relación roll-giro: +1 bajando, -1 subiendo, 0 = sin
+#          control de rumbo (roll de referencia 0)
 FASES_CONTROL = [
-    # t_inicio   pitch   rumbo    dB     cg    nombre
+    # t_inicio   pitch   rumbo    dB   signo_giro  nombre
     (0.0,        -25.0,   0.0,   -3.0,   +1,   "bajada"),
 ]
 PERIODO_CONTROL = 0.25  # [s] cada cuánto corre el controlador (múltiplo de DT)
@@ -156,8 +156,8 @@ if MODO == "directo":
     fases = [(f[0], f[4]) for f in FASES]
 else:
     refs = piecewise_schedule(
-        [(t0, np.deg2rad(th), np.deg2rad(ps), dB, cg)
-         for t0, th, ps, dB, cg, _ in FASES_CONTROL])
+        [(t0, np.deg2rad(th), np.deg2rad(ps), dB, sg)
+         for t0, th, ps, dB, sg, _ in FASES_CONTROL])
     cs0, ctrl = make_attitude_controller(
         refs, PERIODO_CONTROL, init_refs=np.deg2rad(ACTITUD_DEG[1:3]))
     act0 = (0.0, 0.0, FASES_CONTROL[0][3])
@@ -174,13 +174,16 @@ x0 = build_initial_state(
     actuators=act0 if ACTUADORES_INICIO == "en_posicion" else None,
     ecef0=ecef0)
 
-m_tot = float(p.m_static + p.m_lin + p.m_rot + p.m_pist)
+m_tot = float(p.m_static + p.m_lin + p.m_rot + p.m_pist + p.m_dist)
 B0 = float(p.rho) * G0 * float(p.V_displaced)
 print(f"modelo: {entradas['CONFIG']}, perfil '{MODELO}'")
 print(f"solver: {SOLVER}, dt = {DT} s, {T_FINAL:.0f} s "
       f"({int(round(T_FINAL / DT))} pasos, {n} muestras cada {MUESTREO} s)")
 print(f"flotabilidad neta con dB = 0: {B0 - m_tot * G0:+.3f} N "
       f"(masas {m_tot:.3f} kg, V_displaced {float(p.V_displaced):.6f} m^3)")
+if float(p.m_dist) or float(p.disturb_xlin):
+    print(f"perturbaciones: disturb_xlin = {float(p.disturb_xlin) * 1000:+.1f} mm, "
+          f"m_dist = {float(p.m_dist):.3f} kg en {np.asarray(p.r_dist)} m")
 
 # ---- simular ----------------------------------------------------------------
 sim = make_simulator(ctrl, cs0, cfg, dt=DT, decimate=decimate,

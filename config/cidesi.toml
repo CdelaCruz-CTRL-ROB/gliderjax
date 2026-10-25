@@ -170,11 +170,15 @@ gps_gate_depth = 0.7        # [m] hay fix solo si z < esto
 # -----------------------------------------------------------------------------
 [perturbaciones]
 # -----------------------------------------------------------------------------
-disturb_xg = 0.0            # [m] desplazamiento del CG en x (solo r_g: C_RB y
-disturb_yg = 0.0            # [m]   restauración, no M; replicate_disturb_wiring)
-disturb_xlin = 0.0          # [m] error en el cero virtual de la masa móvil:
-#                             rc no queda donde el control cree (fcn_r_lin:
-#                             distxlin). Entra en r_lin -> M, I_b, r_g, restauración
+# Dos tipos, ninguno lo conoce el control:
+# 1) Calibración: el cero virtual de la masa móvil está mal; la masa no
+#    queda donde el control cree (fcn_r_lin: distxlin).
+disturb_xlin = 0.0          # [m] se suma a r_lin -> M, I_b, r_g, restauración
+# 2) Masa real no modelada (lastre, equipo movido, ...): masa puntual con su
+#    posición. Entra en M, I_b, r_g y el peso, pero NO en V_displaced (no
+#    desplaza agua): una masa de perturbación saca al planeador de neutro.
+m_dist = 0.0                # [kg] 0 = sin perturbación
+r_dist = [0.0, 0.0, 0.0]    # [m] posición en el marco cuerpo
 current_n = [0.0, 0.0, 0.0] # [m/s] corriente en NED (norte, este, abajo)
 
 
@@ -194,7 +198,6 @@ use_crossflow = false
 use_geodesy = false         # sin geolocalización
 use_ca_omega = false        # C_A anulado, como en Simulink
 use_ca_translational = false
-replicate_disturb_wiring = true
 
 [modelo.completo]           # con todo lo que agregó el port (misión por waypoints)
 kmr_mode = "signum"
@@ -206,4 +209,3 @@ use_crossflow = true
 use_geodesy = true          # posición ECEF (GPS)
 use_ca_omega = false
 use_ca_translational = false
-replicate_disturb_wiring = true

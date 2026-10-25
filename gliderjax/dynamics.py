@@ -83,22 +83,25 @@ def dxv_from_dB_ref(p: GliderParams, dB_ref):
 
 
 # ----------------------------------------------------------------------------
-# four-mass geometry (port of Mbr+Ma fcn, docs/referencia_simulink/
-# fcn_Mbr_Ma.m; rotating-mass inertia as R I R^T, see docs/MODELO.md 2.2)
+# mass geometry (port of Mbr+Ma fcn, docs/referencia_simulink/fcn_Mbr_Ma.m;
+# rotating-mass inertia as R I R^T, see docs/MODELO.md 2.2): the four
+# vehicle masses plus an optional disturbance point mass m_dist at r_dist
 # ----------------------------------------------------------------------------
 def mass_geometry(p: GliderParams, rc, gamma, dxv):
+    # disturb_xlin: virtual-zero calibration error, the mass is not where
+    # the controller thinks (fcn_r_lin: distxlin)
     r_lin = p.r_lin0 + jnp.array([rc + p.disturb_xlin, 0.0, 0.0])
     r_rot = jnp.array([p.x_rot,
                        -p.R_rot * jnp.sin(gamma),
                         p.R_rot * jnp.cos(gamma)])
     _, r_p, _ = vbd_outputs(p, dxv)
-    cg, sg = jnp.cos(gamma), jnp.sin(gamma)
-    Rx = jnp.array([[1.0, 0.0, 0.0], [0.0, cg, -sg], [0.0, sg, cg]])
+    c_gam, s_gam = jnp.cos(gamma), jnp.sin(gamma)
+    Rx = jnp.array([[1.0, 0.0, 0.0], [0.0, c_gam, -s_gam], [0.0, s_gam, c_gam]])
     I_rot_r = Rx @ p.I_rot @ Rx.T          # rotates with r_rot = Rx [x,0,R]
     #                                        (Simulink has Rx^T I Rx: error)
-    m_tot = p.m_static + p.m_lin + p.m_rot + p.m_pist
+    m_tot = p.m_static + p.m_lin + p.m_rot + p.m_pist + p.m_dist
     r_g = (p.m_static * p.r_static + p.m_lin * r_lin
-           + p.m_rot * r_rot + p.m_pist * r_p) / m_tot
+           + p.m_rot * r_rot + p.m_pist * r_p + p.m_dist * p.r_dist) / m_tot
 
     def about_CO(I_cm, m, r):
         S = skew(r)
@@ -106,7 +109,8 @@ def mass_geometry(p: GliderParams, rc, gamma, dxv):
     I_b = (about_CO(p.I_static, p.m_static, p.r_static)
            + about_CO(p.I_lin, p.m_lin, r_lin)
            + about_CO(I_rot_r, p.m_rot, r_rot)
-           + about_CO(p.I_pist, p.m_pist, r_p))
+           + about_CO(p.I_pist, p.m_pist, r_p)
+           + about_CO(jnp.zeros((3, 3)), p.m_dist, p.r_dist))   # point mass
     return m_tot, r_g, I_b
 
 
@@ -264,9 +268,9 @@ def tau_rot_damping(p: GliderParams, cfg: ModelConfig, nu_r, V):
     return jnp.array([0.0, 0.0, 0.0, Mx, My, Mz])
 
 
-def tau_restoring(p: GliderParams, eta, r_g_dist, m_tot, B, x_b):
-    """Physical wrench (+). Equals -(report g(eta)). Uses DISTURBED r_g and
-    the VBD-shifted buoyancy application point [x_b, 0, 0]."""
+def tau_restoring(p: GliderParams, eta, r_g, m_tot, B, x_b):
+    """Physical wrench (+). Equals -g(eta) of fcn_restauracion.m, with the
+    VBD/surface-shifted buoyancy application point [x_b, 0, 0]."""
     phi, th, psi = eta[3], eta[4], eta[5]
     W = m_tot * G0
     Rnb = R_body_to_ned(phi, th, psi).T
@@ -274,7 +278,7 @@ def tau_restoring(p: GliderParams, eta, r_g_dist, m_tot, B, x_b):
     f_b = Rnb @ jnp.array([0.0, 0.0, -B])
     r_b = jnp.array([x_b, 0.0, 0.0])
     force = f_g + f_b
-    moment = jnp.cross(r_g_dist, f_g) + jnp.cross(r_b, f_b)
+    moment = jnp.cross(r_g, f_g) + jnp.cross(r_b, f_b)
     return jnp.concatenate([force, moment])
 
 
@@ -301,22 +305,16 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
     B_eff = B * B_scale
     x_b_eff = x_b + dxb_s      # VBD shift + surface shift (simple sum, as Simulink)
 
-    # disturbance wiring replication: disturb_xg/yg enter restoring + C_RB
-    # via r_g, but NOT M_RB (the Simulink builds M from undisturbed positions).
-    r_g_dist = r_g + jnp.array([p.disturb_xg, p.disturb_yg, 0.0])
-    r_g_M = r_g if cfg.replicate_disturb_wiring else r_g_dist
-    r_g_C = r_g_dist
-
-    MRB = M_rigid(m_tot, r_g_M, I_b)
+    MRB = M_rigid(m_tot, r_g, I_b)
     M = MRB + p.MA * ma_scale
 
-    tau_hs = tau_restoring(p, eta, r_g_dist, m_tot, B_eff, x_b_eff)
+    tau_hs = tau_restoring(p, eta, r_g, m_tot, B_eff, x_b_eff)
     tau_fb, tau_ff, alpha, beta, V = tau_flowframe(p, cfg, nu_r)
     tau_dr = tau_rot_damping(p, cfg, nu_r, V)
     tau_sf = (tau_surface(p, sigma, nu_r) if cfg.surface_model == "full"
               else jnp.zeros(6))
     tau_cf = tau_crossflow(p, nu_r) if cfg.use_crossflow else jnp.zeros(6)
-    tau_crb = -C_rigid(m_tot, r_g_C, I_b, nu_r) @ nu_r
+    tau_crb = -C_rigid(m_tot, r_g, I_b, nu_r) @ nu_r
 
     tau_ca = jnp.zeros(6)
     if cfg.use_ca_omega or cfg.use_ca_translational:
@@ -354,7 +352,7 @@ def dynamics(x, p: GliderParams, cfg: ModelConfig):
         "tau_flow_body": tau_fb, "tau_flow_flow": tau_ff,
         "tau_drot": tau_dr, "tau_coriolis_rb": tau_crb,
         "tau_CA": tau_ca, "tau_restoring": tau_hs,
-        "r_g": r_g_dist, "B": B_eff, "x_b": x_b_eff,
+        "r_g": r_g, "B": B_eff, "x_b": x_b_eff,
         "B_net": B_eff - m_tot * G0,      # net buoyancy [N], + = floats
         "B_scale": jnp.asarray(B_scale),
         "sigma_surface": jnp.asarray(sigma),

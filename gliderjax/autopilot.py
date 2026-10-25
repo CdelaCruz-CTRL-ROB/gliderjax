@@ -7,7 +7,7 @@ Three modes, one architecture (all compatible with make_simulator):
                   make_open_loop_controller(schedule): piecewise-constant
                   commands from a table of phases
   SEMI-AUTOMATIC  make_attitude_controller(refs_fn):
-                  refs_fn(t) -> [pitch_ref, yaw_ref, roll_ref?, dB_cmd, cg]
+                  refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, turn_sign]
                   attitude loops + reference shaping, NO state machine
   WAYPOINT        make_waypoint_controller(mission):
                   full V2 FSM -> reference shaping -> attitude loops
@@ -44,7 +44,7 @@ def wrap(a):
     return jnp.arctan2(jnp.sin(a), jnp.cos(a))
 
 
-def attitude_step(x, params, refs, cg, integ, dt_ctrl):
+def attitude_step(x, params, refs, turn_sign, integ, dt_ctrl):
     """PLACEHOLDER attitude cascade. refs = [pitch_ref, yaw_ref] (shaped).
     Returns (cmds[rc, gamma, dB=0 slot], new_integ, roll_ref)."""
     th, q = x[4], x[10]
@@ -64,9 +64,10 @@ def attitude_step(x, params, refs, cg, integ, dt_ctrl):
     sat = jnp.abs(rc_cmd) >= params.dx_lin_max
     winding_in = sat & (e * rc_cmd > 0)
     integ = jnp.where(winding_in, integ, integ + e * dt_ctrl)
-    # ---- yaw -> roll_ref (x coupling gain: +1 descent, -1 climb, 0 off)
+    # ---- yaw -> roll_ref; turn_sign = roll-to-turn sign: +1 descent,
+    #      -1 climb, 0 = no heading control
     e_y = wrap(refs[1] - yaw)
-    roll_ref = jnp.clip(K_YAW * e_y, -ROLL_MAX, ROLL_MAX) * cg
+    roll_ref = jnp.clip(K_YAW * e_y, -ROLL_MAX, ROLL_MAX) * turn_sign
     # ---- roll -> gamma (plant sign: gamma>0 -> phi<0, hence the minus)
     gamma_cmd = -K_ROLL * (roll_ref - phi)
     return jnp.array([rc_cmd, gamma_cmd, 0.0]), integ, roll_ref
@@ -103,7 +104,7 @@ def make_open_loop_controller(schedule):
 
 def make_attitude_controller(refs_fn, dt_ctrl, ref_pipeline_kwargs=None,
                              init_refs=(0.0, 0.0)):
-    """SEMI-AUTOMATIC mode. refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, cg]
+    """SEMI-AUTOMATIC mode. refs_fn(t) -> [pitch_ref, yaw_ref, dB_cmd, turn_sign]
     (dB_cmd in PHYSICAL VBD convention: negative = dive).
     init_refs = (pitch, yaw) [rad] where the shaped references start (use
     the initial attitude; default 0 ramps from 0)."""

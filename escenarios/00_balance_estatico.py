@@ -5,7 +5,9 @@ Con los parámetros del archivo de configuración calcula:
   - volumen desplazado necesario para ser neutro;
   - centro de gravedad (CG), centro de flotación (CB) y BG;
   - CERO VIRTUAL de la masa móvil: dónde debe estar para pitch 0 en reposo,
-    y el gamma de la masa rotatoria para roll 0;
+    y el gamma de la masa rotatoria para roll 0. El cero NOMINAL se calcula
+    sin perturbaciones (disturb_xlin, m_dist); aparte se muestra el efecto
+    de las perturbaciones;
   - actitud de equilibrio en reposo (sin flujo) para unos actuadores dados;
   - curvas: pitch en reposo vs rc y roll en reposo vs gamma.
 
@@ -58,31 +60,36 @@ NOMBRE = "00_balance_estatico"
 OUT = os.path.join(RAIZ, "out", NOMBRE)
 os.makedirs(OUT, exist_ok=True)
 p = load_params(CONFIG)
+p_nom = p._replace(disturb_xlin=0.0 * p.disturb_xlin, m_dist=0.0 * p.m_dist)
+perturbado = bool(float(p.disturb_xlin) or float(p.m_dist))
 gamma = np.deg2rad(GAMMA_DEG)
 
 
 @jax.jit
-def momentos(phi, th, rc, gm, dB):
-    """Momentos de restauración [Mx, My] en reposo con actitud (phi, th)."""
-    dxv = dxv_from_dB_ref(p, dB)
-    m, r_g, _ = mass_geometry(p, rc, gm, dxv)
-    B, _, x_b = vbd_outputs(p, dxv)
-    r_g_d = r_g + jnp.array([p.disturb_xg, p.disturb_yg, 0.0])
+def _momentos(q, phi, th, rc, gm, dB):
+    dxv = dxv_from_dB_ref(q, dB)
+    m, r_g, _ = mass_geometry(q, rc, gm, dxv)
+    B, _, x_b = vbd_outputs(q, dxv)
     eta = jnp.array([0.0, 0.0, 0.0, phi, th, 0.0])
-    return tau_restoring(p, eta, r_g_d, m, B, x_b)[3:5]
+    return tau_restoring(q, eta, r_g, m, B, x_b)[3:5]
 
 
-def equilibrio(rc, gm, dB):
+def momentos(phi, th, rc, gm, dB, q=p):
+    """Momentos de restauración [Mx, My] en reposo con actitud (phi, th)."""
+    return _momentos(q, phi, th, rc, gm, dB)
+
+
+def equilibrio(rc, gm, dB, q=p):
     """(roll, pitch) [rad] del equilibrio ESTABLE en reposo (|ángulos| < 90°):
     momentos de restauración = 0. Punto de partida: pitch de la solución 1-D
     con roll 0, y roll ~ atan(y_g / z_g)."""
     lim = np.pi / 2 - 1e-6
-    My = lambda th: float(momentos(0.0, th, rc, gm, dB)[1])
+    My = lambda th: float(momentos(0.0, th, rc, gm, dB, q)[1])
     th0 = brentq(My, -lim, lim) if My(-lim) * My(lim) < 0 else 0.0
-    dxv = dxv_from_dB_ref(p, dB)
-    _, r_g, _ = mass_geometry(p, rc, gm, dxv)
-    phi0 = np.arctan2(float(r_g[1] + p.disturb_yg), float(r_g[2]))
-    f = lambda a: np.asarray(momentos(a[0], a[1], rc, gm, dB))
+    dxv = dxv_from_dB_ref(q, dB)
+    _, r_g, _ = mass_geometry(q, rc, gm, dxv)
+    phi0 = np.arctan2(float(r_g[1]), float(r_g[2]))
+    f = lambda a: np.asarray(momentos(a[0], a[1], rc, gm, dB, q))
     sol, _, ok, _ = fsolve(f, (phi0, th0), full_output=True)
     sol = (np.asarray(sol) + np.pi) % (2 * np.pi) - np.pi
     if ok != 1 or np.any(np.abs(sol) > np.pi / 2):
@@ -103,20 +110,26 @@ def geometria(rc, gm, dB):
 
 g = geometria(RC, gamma, DB)
 W = g["m"] * G0
-dist = np.array([float(p.disturb_xg), float(p.disturb_yg), 0.0])
-r_g = g["r_g"] + dist
+r_g = g["r_g"]
 B_max = float(p.rho) * G0 * float(p.vbd_area) * float(p.vbd_max_disp)
 
 print(f"configuración: {os.path.relpath(CONFIG, RAIZ)}")
 print(f"actuadores: rc = {RC * 1000:+.1f} mm, gamma = {GAMMA_DEG:+.1f}°, "
-      f"dB = {DB:+.2f} N (pistón {g['dxv'] * 1000:+.1f} mm)\n")
+      f"dB = {DB:+.2f} N (pistón {g['dxv'] * 1000:+.1f} mm)")
+if perturbado:
+    print(f"perturbaciones: disturb_xlin = {float(p.disturb_xlin) * 1000:+.2f} mm, "
+          f"m_dist = {float(p.m_dist):.3f} kg en {np.asarray(p.r_dist)} m")
+print()
 
 print("== MASAS ==")
 print(f"{'':12s}{'m [kg]':>9s}{'x [m]':>10s}{'y [m]':>10s}{'z [m]':>10s}")
 for nombre, m_i, r_i in (("estática", p.m_static, p.r_static),
                          ("móvil", p.m_lin, g["r_lin"]),
                          ("rotatoria", p.m_rot, g["r_rot"]),
-                         ("pistón", p.m_pist, g["r_p"])):
+                         ("pistón", p.m_pist, g["r_p"]),
+                         ("perturb.", p.m_dist, p.r_dist)):
+    if nombre == "perturb." and not float(m_i):
+        continue
     r_i = np.asarray(r_i)
     print(f"{nombre:12s}{float(m_i):9.3f}{r_i[0]:10.4f}{r_i[1]:10.4f}{r_i[2]:10.4f}")
 print(f"{'total':12s}{g['m']:9.3f}   peso W = {W:.3f} N")
@@ -138,27 +151,45 @@ else:
 
 print("\n== CENTROS (marco cuerpo, origen = CB con VBD neutro) ==")
 print(f"CG: x_g = {r_g[0] * 1000:+.3f} mm, y_g = {r_g[1] * 1000:+.3f} mm, "
-      f"z_g = {r_g[2] * 1000:+.3f} mm   (incluye disturb_xg/yg)")
+      f"z_g = {r_g[2] * 1000:+.3f} mm" + ("   (con perturbaciones)" if perturbado else ""))
 print(f"CB: x_b = {g['x_b'] * 1000:+.3f} mm")
 print(f"BG (z_g - z_b) = {r_g[2] * 1000:+.3f} mm  "
       f"({'CG abajo del CB: estable' if r_g[2] > 0 else 'CG ARRIBA del CB: INESTABLE'})")
 
-print("\n== CERO VIRTUAL (dB = 0) ==")
+print("\n== CERO VIRTUAL NOMINAL (dB = 0, sin perturbaciones) ==")
 # rc para pitch 0 en reposo con gamma = 0: My(0, 0) = 0, lineal en rc
-My0 = lambda rc: float(momentos(0.0, 0.0, rc, 0.0, 0.0)[1])
-rc0 = brentq(My0, -1.0, 1.0)
-x_fis = float(p.r_lin0[0]) + rc0 + float(p.disturb_xlin)
+rc_pitch0 = lambda q: brentq(
+    lambda rc: float(momentos(0.0, 0.0, rc, 0.0, 0.0, q)[1]), -1.0, 1.0)
+rc0 = rc_pitch0(p_nom)
+x_fis = float(p.r_lin0[0]) + rc0
 print(f"masa móvil: para pitch 0 debe estar en x = {x_fis:.5f} m")
 print(f"  r_lin0 del archivo = {float(p.r_lin0[0]):.5f} m  ->  rc para pitch 0 = "
-      f"{rc0 * 1000:+.3f} mm" + ("  (incluye disturb_xlin)" if float(p.disturb_xlin) else ""))
-th_rc0 = equilibrio(0.0, 0.0, 0.0)[1]
+      f"{rc0 * 1000:+.3f} mm")
+th_rc0 = equilibrio(0.0, 0.0, 0.0, p_nom)[1]
 print(f"  con rc = 0, pitch en reposo = {np.rad2deg(th_rc0):+.3f}°")
-Mx0 = lambda gm: float(momentos(0.0, 0.0, rc0, gm, 0.0)[0])
+Mx0 = lambda gm, q: float(momentos(0.0, 0.0, rc0, gm, 0.0, q)[0])
 try:
-    gm0 = brentq(Mx0, -np.pi / 2, np.pi / 2)
+    gm0 = brentq(lambda gm: Mx0(gm, p_nom), -np.pi / 2, np.pi / 2)
     print(f"masa rotatoria: gamma para roll 0 = {np.rad2deg(gm0):+.3f}°")
 except ValueError:
-    print("masa rotatoria: ningún gamma en ±90° da roll 0 (revisar disturb_yg)")
+    print("masa rotatoria: ningún gamma en ±90° da roll 0")
+
+if perturbado:
+    print("\n== EFECTO DE LAS PERTURBACIONES (el control no las conoce) ==")
+    rc0_p = rc_pitch0(p)
+    th_p = equilibrio(0.0, 0.0, 0.0)[1]
+    print(f"rc para pitch 0: {rc0 * 1000:+.3f} mm nominal -> {rc0_p * 1000:+.3f} mm "
+          f"real ({(rc0_p - rc0) * 1000:+.3f} mm)")
+    print(f"pitch en reposo con rc = 0: {np.rad2deg(th_rc0):+.3f}° nominal -> "
+          f"{np.rad2deg(th_p):+.3f}° real")
+    try:
+        gm0_p = brentq(lambda gm: float(momentos(0.0, 0.0, rc0_p, gm, 0.0)[0]),
+                       -np.pi / 2, np.pi / 2)
+        print(f"gamma para roll 0: {np.rad2deg(gm0):+.3f}° nominal -> "
+              f"{np.rad2deg(gm0_p):+.3f}° real")
+    except ValueError:
+        print("gamma para roll 0: ningún gamma en ±90° (la masa rotatoria no "
+              "alcanza a compensar la perturbación)")
 
 print(f"\n== EQUILIBRIO EN REPOSO con los actuadores de la sección 2 ==")
 phi_e, th_e = equilibrio(RC, gamma, DB)

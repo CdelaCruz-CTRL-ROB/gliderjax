@@ -27,9 +27,11 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Vector de restauración verificado (`fcn_restauracion.m`).
 - [x] Cadenas de actuadores verificadas (autor).
 - [x] Switch directo / control en `02_simulacion.py`.
-- [ ] `disturb_xg`/`disturb_yg`: en tu Mbr+Ma fcn se suman a r_g **después**
-      de armar M (no pasan por r_lin; eso es solo `distxlin`). Falta saber
-      cómo están cableadas en tu diagrama y decidir (ver entrada 7).
+- [x] Perturbaciones: se quitan `disturb_xg`/`disturb_yg`; quedan
+      `disturb_xlin` (calibración) y la masa de perturbación `m_dist`.
+- [x] `cg` → `turn_sign` / "signo de giro".
+- [ ] ¿Error de calibración también en la masa rotatoria (cero de γ mal
+      calibrado), análogo a `disturb_xlin`?
 - [ ] Barridos de parámetros: correr varias variantes y superponerlas
       ("mover todo y ver qué da"). Puede salir de `02_simulacion.py`.
 - [ ] ¿Escalar los coeficientes hidrodinámicos con ρ/ρ_CFD al cambiar
@@ -49,6 +51,44 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (8) — Perturbaciones: calibración y masa de perturbación; signo de giro
+
+### Decisión del autor sobre las perturbaciones
+
+- Se mantiene la del control: `disturb_xlin`, error en el cero virtual
+  de la masa móvil (la masa no queda donde el control cree).
+- Se quitan `disturb_xg`/`disturb_yg`: sumarlas a r_g después de armar M
+  no es correcto (el CG se mueve sin que se mueva ninguna masa).
+- Una perturbación real se modela como masa: `m_dist` en `r_dist`. No
+  entra en el cálculo de los ceros ni en el control.
+
+### Cambios
+
+- `mass_geometry`: quinta masa puntual `m_dist` en `r_dist` (M, I_b, r_g,
+  peso). No desplaza agua.
+- Se quitan `disturb_xg`, `disturb_yg` y el switch
+  `replicate_disturb_wiring`; M, C_RB y la restauración usan el mismo r_g.
+- `00_balance_estatico.py`: cero virtual **nominal** (sin perturbaciones)
+  y, aparte, el efecto de las perturbaciones.
+- `02_simulacion.py`: la flotabilidad neta incluye `m_dist`; imprime las
+  perturbaciones si hay.
+- `cg` → `turn_sign` en el código y "signo_giro" en el script y la
+  documentación (`cg` parecía "centro de gravedad"). También se renombró
+  la variable local `cg` (cos γ) de `mass_geometry`.
+
+### Verificación
+
+- Sin perturbaciones, la validación da exactamente lo mismo que antes
+  (0.0).
+- 0.7 kg de perturbación puestos en la masa móvil (rc = 0) = m_lin + 0.7 kg
+  (diferencia 1e-13); flotabilidad neta −0.7·g − 2 N = −8.867 N.
+- Balance estático con 0.5 kg en x = 0.3 m y `disturb_xlin = 2 mm`: rc
+  para pitch 0 pasa de +0.013 a −11.987 mm (10 mm por la masa + 2 mm por
+  la calibración); pitch en reposo con rc = 0: −24°; V_displaced para
+  neutralidad +0.5 L.
 
 ---
 
