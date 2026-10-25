@@ -55,14 +55,35 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Reemplazar controladores provisionales por los del autor: roll
       (entradas 13 y 14), yaw (entrada 15); pitch se queda el provisional
       (entrada 12).
-- [ ] Yaw: sobrepaso de ~13° por carga del integrador; sintonizar
+- [x] Yaw: sobrepaso de ~13° por carga del integrador; sintonizar
       `I_MAX_Y` / `KI_Y` o la razón del moldeado de rumbo (entrada 15).
+      Sintonizado por el autor (entrada 16).
 - [ ] Waypoints: integrador de yaw con `turn_sign = 0` (superficie,
       fondo) sigue integrando hasta su tope (entrada 15).
 - [ ] Script de misión por waypoints (`escenarios/03_...`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-25 (16) — Integral de yaw en su propio panel
+
+En `09_control.png` (modo pitch_roll_yaw), `mem[0]` del lazo de yaw (KI·∫e,
+en grados de roll, con ±`I_MAX_Y`) pasa del panel de roll a un séptimo
+panel abajo. Antes quedaba aplastado por la escala del roll. Entra a la
+referencia de roll como −`mem[0]`·signo_giro.
+
+Prueba con las ganancias que el autor ajustó (`KP_Y = 0.45`, `KD_Y = 0.2`,
+`KI_Y = 0.001`, `I_MAX_Y = 0.005` rad = 0.29°) y la tabla de 250 s (giro
+de 0 a 45° bajando en t = 50): la integral llega al tope (−0.29°) en
+t ≈ 72 s, se queda ahí hasta t ≈ 170 s y luego se descarga despacio
+(−0.25° en t = 250 s).
+
+**Sintonía final del autor** ("suficientemente bien", control a 100 Hz):
+`KP_Y = 0.8`, `KD_Y = 0.2`, `KI_Y = 0.01`, `I_MAX_Y = 0.02` rad (1.15° de
+roll), `ROLL_MAX = 0.8` rad; roll `KP_R = 0.008`, `KD_R = 0.02`,
+`KI_R = 0.01`, `I_MAX_R = 0.001` m. Siguiente paso: waypoints.
 
 ---
 

@@ -75,8 +75,9 @@ rc_cmd = m_tot · x_g / m_lin
 - Con roll el momento de gravedad es −W·(z_g·sin θ + x_g·cos θ·cos φ); la
   ley ignora el cos φ (≈ 3 % con 15° de roll).
 
-**Yaw: PID del autor → roll de referencia** (`KP_Y = 0.35`, `KD_Y = 0.2`,
-`KI_Y = 0.003`, `I_MAX_Y = 0.1` rad, `ROLL_MAX = 0.8` rad)
+**Yaw: PID del autor → roll de referencia** (sintonizado por el autor,
+2026-10-25: `KP_Y = 0.8`, `KD_Y = 0.2`, `KI_Y = 0.01`, `I_MAX_Y = 0.02`
+rad, `ROLL_MAX = 0.8` rad)
 
 ```
 e        = wrap(ψ − ψ_ref)                (medido − referencia, camino corto)
@@ -98,11 +99,11 @@ roll_ref = sat((−KP·e − KD·ė − I) · turn_sign, ±ROLL_MAX)
   Invierte el sentido del giro entre bajada y subida (ver
   [MODELO.md](MODELO.md), sección 6). Con `turn_sign = 0` no hay control
   de rumbo (el integrador sigue integrando, hasta su tope).
-- `I_MAX_Y = 0.1` rad (5.7° de roll) lo puse yo, provisional.
+- `I_MAX_Y = 0.02` rad = 1.15° de roll (el autor lo bajó desde 0.1 rad).
 
 **Roll: ley del autor, parte de PID no lineal con compensación de
 gravedad** (ganancias sintonizadas por el autor con control a 100 Hz:
-`KP_R = 0.008`, `KD_R = 0.02`, `KI_R = 0.0008`, `I_MAX_R = 0.001`)
+`KP_R = 0.008`, `KD_R = 0.02`, `KI_R = 0.01`, `I_MAX_R = 0.001`)
 
 ```
 e      = φ − φ_ref                     (medido − referencia, igual que pitch)

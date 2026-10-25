@@ -41,7 +41,7 @@ MODELO = "simulink"   # perfil [modelo.<nombre>]: "simulink" | "completo"
 SOLVER = "ode4"       # "ode4" Runge-Kutta 4 | "ode2" Heun | "ode1" Euler
 #                       (paso fijo, mismos nombres que en Simulink)
 DT = 0.005            # [s] paso de integración
-T_FINAL = 100.0       # [s] duración
+T_FINAL = 250.0       # [s] duración
 MUESTREO = 0.05        # [s] cada cuánto se guarda una muestra (múltiplo de DT)
 
 # =============================================================================
@@ -62,7 +62,7 @@ ORIGEN_GEO = (-95.72275, 19.37214)   # [deg] lon, lat
 # =============================================================================
 # 4) ACTUADORES: directo o con control
 # =============================================================================
-MODO = "pitch_roll"      # "directo":    tabla FASES -> posición de los actuadores
+MODO = "pitch_roll_yaw"      # "directo":    tabla FASES -> posición de los actuadores
 #                       "pitch_roll": tabla FASES_PITCH_ROLL -> referencias de
 #                                     pitch y de roll; cada controlador por su
 #                                     lado (pitch -> rc, roll -> gamma)
@@ -101,7 +101,7 @@ FASES_PITCH_ROLL = [
 FASES_PITCH_ROLL_YAW = [
     # t_inicio   pitch   rumbo     dB    nombre
     (0.0,        -25.0,    0.0,  -3.0,  "bajada"),
-    (100.0,      -25.0,  170.0,  -3.0,  "giro a 170"),
+    (50.0,      -25.0,  45.0,  -3.0,  "giro a 170"),
     (300.0,      -25.0, -170.0,  -3.0,  "a -170: 20° por el camino corto"),
     (400.0,       25.0, -170.0,   3.0,  "subida"),
     (550.0,       25.0,  -90.0,   3.0,  "giro subiendo"),
@@ -333,7 +333,9 @@ def figura_control():
                 0, len(tab) - 1)
     ref = tab[i, 1:]                                # [pitch, yaw, roll, dB, sg]
     usada = tel["ctrl_state"][:, 12:15]             # [pitch, roll, yaw]
-    f, ax = plt.subplots(6, 1, figsize=(10, 13), sharex=True)
+    yaw = MODO == "pitch_roll_yaw"
+    f, ax = plt.subplots(7 if yaw else 6, 1, figsize=(10, 15 if yaw else 13),
+                         sharex=True)
     ax[0].plot(t, np.rad2deg(tel["eta"][:, 4]), label="pitch")
     ax[0].plot(t, np.rad2deg(usada[:, 0]), label="referencia usada")
     ax[0].plot(t, np.rad2deg(ref[:, 0]), "--", label="tabla")
@@ -342,14 +344,6 @@ def figura_control():
     ax[1].plot(t, np.rad2deg(usada[:, 1]), label="referencia usada")
     if MODO == "pitch_roll":
         ax[1].plot(t, np.rad2deg(ref[:, 2]), "--", label="tabla")
-    else:
-        # aporte integral del lazo de yaw (en rad de roll) y su tope
-        ax[1].plot(t, np.rad2deg(tel["ctrl_state"][:, 8]), lw=0.8,
-                   label="mem[0] de yaw (aporte integral)")
-        lim = getattr(autopilot, "I_MAX_Y", None)
-        if lim is not None:
-            for s in (1, -1):
-                ax[1].axhline(s * np.rad2deg(lim), color="C2", ls=":", lw=0.8)
     ax[1].set_ylabel("roll [deg]")
     ax[2].plot(t, np.rad2deg(tel["eta"][:, 5]), label="rumbo")
     if MODO == "pitch_roll_yaw":
@@ -375,7 +369,17 @@ def figura_control():
             for s in (1, -1):
                 ax[5].axhline(s * lim * 1000, color=c, ls=":", lw=0.8)
     ax[5].set_ylabel("mem[0]\n[mm]")
-    ax[5].set_xlabel("t [s]")
+    if yaw:
+        # mem[0] de yaw: el aporte integral, en grados de roll, y su tope.
+        # Entra a roll_ref como -mem[0]·signo_giro
+        ax[6].plot(t, np.rad2deg(tel["ctrl_state"][:, 8]), color="C2",
+                   label="mem[0] de yaw (KI·∫e)")
+        lim = getattr(autopilot, "I_MAX_Y", None)
+        if lim is not None:
+            for s in (1, -1):
+                ax[6].axhline(s * np.rad2deg(lim), color="C2", ls=":", lw=0.8)
+        ax[6].set_ylabel("mem[0] yaw\n[deg de roll]")
+    ax[-1].set_xlabel("t [s]")
     for a in ax:
         a.grid(alpha=0.3)
         a.legend(loc="upper right", fontsize=8) if a.get_legend_handles_labels()[0] else None

@@ -119,8 +119,9 @@ referencia **usada** por el controlador (después del moldeado; en modo
 pitch_roll_yaw, la de roll es la que calculó el control de yaw) y contra
 la de la tabla; rc y γ (comando y posición); y `mem[0]` de los lazos de
 pitch y roll (el aporte integral, con líneas en ±`I_MAX_P` y ±`I_MAX_R`).
-En modo pitch_roll_yaw, el panel de roll muestra también el aporte
-integral del yaw (en grados de roll, con ±`I_MAX_Y`).
+En modo pitch_roll_yaw hay un séptimo panel abajo: `mem[0]` del lazo de
+yaw (el aporte integral KI·∫e, en grados de roll, con ±`I_MAX_Y`). Entra
+a la referencia de roll como −`mem[0]`·signo_giro.
 
 Pruebas (2026-10-24, controlador a 0.25 s; pitch con θ̇ − θ̇_ref, aporte
 integral con tope y `KI_P = 0.005`; roll con la ley del autor (PID no

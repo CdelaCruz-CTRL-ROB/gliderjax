@@ -46,10 +46,10 @@ from .geodesy import ecef2lla
 # ---- placeholder attitude gains (tuned for the CIDESI soft-z_g vehicle) ----
 KP_P, KD_P, KI_P = 0.015, 0.08, 0.005       # pitch PID (x_g units / rad)
 I_MAX_P = 0.005                              # [m of x_g] max |integral term|
-KP_Y, KD_Y, KI_Y = 0.35, 0.2, 0.003          # yaw PID (rad of roll / rad)
-I_MAX_Y = 0.1                                # [rad of roll] max |integral term|
+KP_Y, KD_Y, KI_Y = 0.8, 0.2, 0.01         # yaw PID (rad of roll / rad)
+I_MAX_Y = 0.02                                # [rad of roll] max |integral term|
 ROLL_MAX = 0.8                              # [rad] roll_ref saturation
-KP_R, KD_R, KI_R = 0.008, 0.02, 0.0008          # roll PID (m of u / rad);
+KP_R, KD_R, KI_R = 0.008, 0.02, 0.01          # roll PID (m of u / rad);
 #                                              tuned by the author (100 Hz)
 I_MAX_R = 0.001                              # [m of u] max |integral term|
 BUOY_SIGN = -1.0
