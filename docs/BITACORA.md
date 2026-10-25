@@ -36,15 +36,33 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       ("mover todo y ver qué da"). Puede salir de `02_simulacion.py`.
 - [ ] ¿Escalar los coeficientes hidrodinámicos con ρ/ρ_CFD al cambiar
       `rho`? Hoy no se escalan.
-- [ ] Confirmar `BUOY_SIGN` (convención de la FSM V2 → VBD).
+- [x] Confirmar `BUOY_SIGN` (convención de la FSM V2 → VBD): −1
+      (entrada 17).
+- [x] Actualizar la FSM del port a la versión actual de Simulink:
+      constantes, flare por tiempo, pitch de antena en SURF (entrada 18).
+- [x] **GPS: ¿compuerta o no?** Sin compuerta, como Simulink
+      (`gps_gate_depth = inf`); sin ruido ni antena por ahora (entrada 19).
+- [ ] Futuro: GPS con ruido (`gps_sigma_m`) y fix solo con la antena fuera
+      del agua (necesita la posición de la antena).
+- [ ] Modelo de inmersión con giro (`fsm/dive_models.py`): sin corriente,
+      el modelo recto deja una deriva falsa de 0.1-0.2 m/m (entrada 18).
+- [ ] Modelo de inmersión con k según el pitch del tramo: con ∓25° el
+      planeador se pasa 147 m del WP2 (entrada 20). Para eso `plan` y
+      `displacement` tendrían que recibir el pitch del tramo (hoy no lo
+      reciben).
+- [ ] ¿De dónde sale la condición inicial del integrador `ECEF_XYZ` en
+      Simulink? (entrada 17)
 - [ ] Pasar al archivo de configuración las ganancias de control y el
       moldeado de referencias (cuando lleguen tus controladores).
-- [ ] Script de waypoints: pitch de cada inmersión como dato de la misión
-      (sin pitch automático en el VBD).
+- [x] Script de waypoints: pitch de cada inmersión como dato de la misión
+      (sin pitch automático en el VBD). Por tramo (entrada 20).
 - [ ] Revisar si sign(α) en KMR es necesario (la inversión del giro ocurre
       sin él).
-- [ ] DONE con flotabilidad positiva (confirmar contra V2).
-- [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
+- [x] DONE con flotabilidad positiva. Simulink también pide 0 (entrada
+      17); queda la decisión del autor: positiva (`buoy_done_ref`, entrada 18).
+- [x] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2: en Simulink el flare
+      es por tiempo desde 3.5 m (entrada 17); se resuelve al actualizar la
+      FSM.
 - [ ] Diseño de roll: resuelto en la implementación (la salida de la ley
       se aplica como u = −y_g, entrada 14). Falta revisar en el diseño el
       signo del término de y_g del modelo de roll (Fossen g₄ lleva −y_g;
@@ -60,10 +78,222 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       Sintonizado por el autor (entrada 16).
 - [ ] Waypoints: integrador de yaw con `turn_sign = 0` (superficie,
       fondo) sigue integrando hasta su tope (entrada 15).
-- [ ] Script de misión por waypoints (`escenarios/03_...`).
+- [x] Script de misión por waypoints: `escenarios/03_mision.py` (entrada 20).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-25 (20) — Script de misión: `escenarios/03_mision.py`
+
+Guía en [MISION.md](MISION.md). Mismo estilo que `02_simulacion.py`:
+- waypoints (lon, lat), con pitch opcional por tramo;
+- FSM y modelo de inmersión por nombre;
+- `FSM_AJUSTES` para cambiar constantes;
+- figuras de mapa, perfil, actitud y deriva;
+- una fila por inmersión en consola;
+- comparación de entradas con la corrida anterior.
+
+**Duración** (pedido del autor): `"tiempo"` (corta en `T_FINAL`) o
+`"mision"` (hasta DONE + 20 s, como el `stop` de Simulink, con aviso de
+TIMEOUT en `T_MAX`). Para eso:
+- `sim.make_resumable_simulator`: simula por bloques que siguen donde quedó
+  el anterior;
+- `sim.make_simulator` comparte con él el código del paso (`_make_frame`).
+
+Verificado:
+- `02_simulacion.py` da lo mismo que antes del cambio (diferencia 0.0 en
+  las 30 señales);
+- 3 bloques de 400 s dan lo mismo que un bloque de 1200 s (diferencia 0.0).
+
+Otros cambios en la librería:
+- `fsm/simulink.py`: `leg_pitch`, pitch de bajada y subida por waypoint
+  (por tramo); el flare arranca del pitch de subida del tramo. Sin él,
+  igual que antes.
+- `fsm/dive_models.py`: `DIVE_MODELS`, los modelos por nombre.
+- `Navigator.config`: las constantes de la FSM, para imprimir y graficar.
+- `make_waypoint_controller(..., init_refs)`: el moldeado arranca en la
+  actitud inicial, como en `make_attitude_controller`.
+- `check_mission`: el error dice el WP con numeración desde 1.
+
+Pruebas, todas en el triángulo de Simulink:
+
+| Caso | Resultado |
+|---|---|
+| `"mision"` | DONE en t = 1957 s, simula hasta 1977 s, 14 s de cómputo |
+| `"mision"`, `T_MAX = 1200` | TIMEOUT, 2 de 3 |
+| `"tiempo"`, `T_FINAL = 1200` | tiempo cumplido sin terminar, 2 de 3 |
+| WP2 con ∓25° | completa en 3456 s con 3 inmersiones: la 1a se pasa 147 m del WP2 porque el modelo recto supone k = 1.4, y a −25° el planeador avanza más |
+| lat/lon invertidas | error con el WP |
+
+En superficie la flotabilidad neta oscila (12_actitud.png). Es el modelo
+de superficie de 2 puntos (`fcn_buoyancy_surface`).
+
+---
+
+## 2026-10-25 (19) — GPS ideal, como Simulink
+
+Decisión del autor: leer el GPS en superficie, sin considerar por ahora
+ruido ni si la antena sale o no. `config/cidesi.toml`:
+`gps_gate_depth = inf` (antes 0.7). Siempre hay fix con la posición
+verdadera, como en Simulink, y la FSM solo lo lee en FIX_PLAN.
+
+Verificación: el triángulo, ahora directo del archivo de configuración
+(sin cambios en el script), da lo mismo que la prueba sin compuerta de la
+entrada 18: DONE en t = 1957 s.
+
+`demos/demo_mission.py` (cuadro de 3 km, modelo completo, control a
+0.25 s): completa, 5/5 waypoints, DONE en t = 28327 s. Con la compuerta
+llegaba a 1/5. D_norm final [−0.049, +0.046] m/m.
+
+---
+
+## 2026-10-25 (18) — FSM: una por archivo; tu FSM actual portada
+
+Pedido del autor: implementar la FSM actual, pero dejar fácil crear
+alternativas, por ejemplo una que cuente el giro en el modelo simplificado
+que calcula la profundidad de la inmersión.
+
+### Organización (guía en CONTROL_Y_MISION.md, sección 3.1)
+
+- `navigation.py`: queda solo lo común:
+  - `Sensors`, lo que una FSM puede leer: fix, gps_ok, depth, roll, pitch,
+    yaw, t;
+  - las 5 salidas (`nav_out`);
+  - `Navigator`, el contrato;
+  - GPS;
+  - misiones, con `check_mission`, que detecta lat/lon invertidas.
+- `fsm/__init__.py`: registro, `fsm.make("simulink", mision, **opciones)`.
+- `fsm/simulink.py`: tu FSM, con los nombres de Simulink. Constantes en
+  `Config` y memoria en `Carry`, ambos con nombre.
+- `fsm/dive_models.py`: `DiveModel(displacement, plan)`. El de Simulink es
+  `STRAIGHT_GLIDE`.
+- `autopilot.make_waypoint_controller(nav, dt)` acepta cualquier FSM.
+  `ctrl_state`:
+  - [24:26] fix;
+  - [26:31] salidas de la FSM;
+  - [31:] memoria (tamaño libre).
+
+  `waypoint_signals(tel, nav)` lee todo por nombre.
+- `demos/demo_mission.py` adaptado a la nueva interfaz.
+
+### Cambios respecto al port anterior ("V2")
+
+Ahora sigue a `referencia_simulink/fsm_y_geodesia.m`:
+- espera en superficie de 60 s;
+- `depth_epsilon` 2 m;
+- `min_estimation_depth` 15 m;
+- flare por tiempo desde 3.5 m (rampa de +35° a −63° en 10 s);
+- pitch de antena en SURFACE_WAIT;
+- en el tick en que planea, FIX_PLAN entrega el rumbo anterior (como
+  Simulink);
+- DONE con flotabilidad positiva (`buoy_done_ref = −3`, decisión del
+  autor).
+
+`lla2ecef` sigue corregido. `mission_complete` ya no es memoria: es una
+salida.
+
+### Verificación (triángulo de tu Simulink, perfil `simulink` + geodesia, dt = 0.005 s, control a 100 Hz)
+
+- **Con `gps_gate_depth = 0.7` (el valor del TOML): no llega.** En
+  superficie, con pitch −63°, el origen del cuerpo queda a z ≈ 0.85-1.8 m.
+  Nunca hay fix fresco, la FSM planea con el fix del arranque y el
+  planeador se va al noreste (D_norm ≈ −1.9 m/m). Lo mismo con el perfil
+  `completo`, y en el demo (1/5 waypoints). Antes funcionaba porque el port
+  viejo ponía pitch 0° en SURF y el planeador quedaba más horizontal.
+- **Sin compuerta (como Simulink, solo en la prueba): llega.** SUBMERGE
+  en t = 61 s (prof. planeada 139 m), WP2 a 16 m en t = 969 s, WP3 a 48 m
+  en t = 1897 s, DONE en t = 1957 s. Queda flotando con z = 0.85 m y pitch
+  −63°.
+- Sin corriente, el estimador da D_norm = [+0.004, −0.091] tras la 1a
+  inmersión y [−0.006, +0.197] tras la 2a. Es deriva falsa: el modelo
+  recto no cuenta el giro (2a inmersión: empieza con rumbo 45° y gira a
+  −42°). Ejemplo del modelo de inmersión con giro que propone el autor.
+- `02_simulacion.py` (modos sin FSM) sin cambios: corre igual.
+
+---
+
+## 2026-10-25 (17) — Geodesia y FSM de Simulink: comparación con el port
+
+El autor dejó en `sim/simulink/` su código actual de geodesia y FSM y
+capturas del diagrama. Copiados tal cual a `docs/referencia_simulink/`:
+`fsm_y_geodesia.m`, `diagrama_geodesia.png`, `diagrama_fsm.png`,
+`diagrama_fsm_2.png`.
+
+### Geodesia en Simulink
+
+`eta_dot(1:3)` (NED) → `fcn_get_R_n_e` (ECEF_DOT = R_n_e(lon, lat)·ṗ) →
+integrador `ECEF_XYZ` → `fcn_ecef2lla` → `lla_rad_vec` (vuelve a
+`fcn_get_R_n_e`) y `lla_deg_lon_lat` (→ FSM). El port hace lo mismo
+(`dynamics.py`, líneas 354-357).
+
+**Orden lon/lat: consistente, no es error.** En todo el código el vector
+es `[lon, lat, h]`, la notación de Fossen (l, μ, h) con R_n^e(l, μ). La
+matriz `R_n_e` es la de Fossen con l = lon y μ = lat. Las entradas
+coinciden en todos los usos: waypoints `[lon, lat, 0]`, origen, fix,
+`fcn_get_R_n_e`. Solo hay dos nombres engañosos:
+- el comentario de `fcn_ecef2lla` dice `[lat_deg, lon_deg]`, pero la
+  salida es `[lon; lat]`;
+- la entrada `ECEF` de `fcn_get_R_n_e` recibe en realidad `lla_rad_vec`.
+
+**Error real: `fcn_lla2ecef` (línea 415) calcula `y` con `cos_lon`; debe
+ser `sin_lon`.** Esa función solo la usa la FSM, para el origen, los
+waypoints y el fix. La posición integrada usa la cinemática y
+`fcn_ecef2lla`, que están bien. Efecto: la FSM ve un mapa NED
+distorsionado. Cerca del origen, NED_FSM = A·NED_real con
+A = [[0.902, 0.361], [0.030, 0.891]]:
+
+| Rumbo real | La FSM lo ve como | Escala de distancia |
+|---|---|---|
+| 0° | 1.9° | 0.90 |
+| 45° | 36.1° | 1.10 |
+| 90° | 67.9° | 0.96 |
+| 135° | 122.1° | 0.72 |
+
+Misión triángulo: el WP2 real está a 391.8 m con rumbo 45.1°; la FSM lo
+pone a 433.1 m con rumbo 36.1°. El planeador apunta con errores de rumbo
+de hasta ~22°. El radio de llegada de 90 m se mide en metros
+distorsionados (de 0.72 a 1.10). Probablemente el estimador de deriva
+absorbe parte del error como si fuera corriente, y al replanear en cada
+fix se corrige: por eso la misión llega.
+
+El port ya tenía corregido `lla2ecef` (`geodesy.py:12`, "Corrected: y uses
+sin_lon"). Se mantiene corregido (regla del autor: no replicar errores de
+Simulink).
+
+Con el error, el ECEF del origen da lon = −135°. Por eso la condición
+inicial del integrador `ECEF_XYZ` en Simulink tiene que venir de otro lado.
+Pendiente preguntar de dónde.
+
+### FSM: diferencias entre la versión actual de Simulink y el port ("V2")
+
+| | Simulink actual | Port |
+|---|---|---|
+| `surface_wait_time_s` | 60 s | 30 s |
+| `depth_epsilon_m` | 2 m | 4 m |
+| `flare_depth_m` | 3.5 m | 1 m |
+| `min_estimation_depth_m` | 15 m | 20 m |
+| Flare | por tiempo: al pasar de 3.5 m, rampa de +35° a −63° (`pitch_flare_target`) en 10 s | por profundidad hacia 0°, sin efecto (`FLARE_DEPTH = SURF_EPS`) |
+| pitch en SURFACE_WAIT | −63° (antena) | 0° |
+| yaw_ref en el tick en que FIX planea | el rumbo anterior | el nuevo (1 tick de diferencia) |
+| DONE | Buoy 0 (neutra) | Buoy 0 (neutra) |
+
+Igual en los dos: estados y transiciones, estimador de deriva, plan (el
+port simplifica `D·200·dist/(560 + 1e-6)` = `D·dist/(2k)`), desenrollado
+del rumbo en DIVE, peculiaridad del tick en que se acaban los waypoints,
+constantes restantes.
+
+**Cableado (`diagrama_fsm.png`):**
+- `Buoy_ref` → ganancia −1 → switch manual → prefiltro → limitador → TF →
+  `delta_B_ref` del VBD: **`BUOY_SIGN = −1` confirmado**.
+- `yaw_roll_coupling_gain` → switch (contra la constante 1) →
+  `rollyaw_dir` = `turn_sign`.
+- `mission_complete` → bloque `stop`: detiene la simulación 20 s después.
+  El port no lo tiene: la simulación dura lo que diga `T_FINAL`.
+
+DONE con Buoy = 0 también está en Simulink. El autor decidió (2026-10-24)
+que debe quedar con flotabilidad positiva.
 
 ---
 

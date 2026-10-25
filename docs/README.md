@@ -14,7 +14,8 @@ hay en el modelo, de dónde viene cada parte y dónde se cambia cada cosa**.
 | [SIMULACION.md](SIMULACION.md) | Balance estático (cero virtual, neutralidad) y simulación manual: solver, condiciones iniciales, comparación con la corrida anterior |
 | [VALIDACION.md](VALIDACION.md) | Script de validación en lazo abierto: cómo usarlo, qué muestra cada figura, cómo comparar con Simulink, señales disponibles |
 | [MODELO.md](MODELO.md) | Inventario del modelo físico: qué viene de Simulink y qué se agregó, comparación con tu código, saturación, crossflow, superficie, inversión del giro |
-| [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales, FSM de waypoints estado por estado, problemas conocidos |
+| [MISION.md](MISION.md) | Misión por waypoints (`03_mision.py`): waypoints, pitch por tramo, duración por tiempo o por misión (con timeout), figuras |
+| [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales, FSM de waypoints estado por estado, cómo hacer una FSM alternativa, problemas conocidos |
 | [DISENO_ROLL.md](DISENO_ROLL.md) | Pendiente de diseño: signo del error y variable de control del roll (para trabajarlo en otra sesión) |
 | [BITACORA.md](BITACORA.md) | Registro fechado de cada paso, experimento y decisión |
 | [referencia_simulink/](referencia_simulink/) | Código original de Simulink (la "verdad" para validar) |
@@ -34,13 +35,17 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
       dynamics.py                       ecuaciones de movimiento e hidrodinámica
       sim.py                            solvers (ode1, ode2, ode4), actuadores, simulador
       autopilot.py                      controladores: un lazo por función (PROVISIONALES)
-      navigation.py                     FSM de waypoints (V2) y GPS
+      navigation.py                     lo común a las FSM: sensores, salidas, GPS, misiones
+      fsm/                              máquinas de estados de waypoints, una por archivo
+        simulink.py                       la tuya (Simulink, 2026-10)
+        dive_models.py                    modelos de inmersión (predicción y plan)
       geodesy.py                        conversiones lat/lon <-> ECEF <-> NED
       scope.py                          gráficas tipo "scope" de Simulink
     escenarios/                       SCRIPTS DE TRABAJO, uno por caso de uso
       00_balance_estatico.py            sin simular: masas, flotabilidad, CG, cero virtual
       01_validacion_dinamica.py         prueba fija en lazo abierto, modelo = Simulink
       02_simulacion.py                  simulación manual: cambias, corres, comparas
+      03_mision.py                      misión por waypoints con la FSM
     out/                              resultados (figuras, telemetría); no va a git
     run_test.py                       script de prueba de v1 (se conserva)
     demos/                            ejemplos de v1 (lazo abierto, lazo cerrado, misión, Monte Carlo)
@@ -64,8 +69,10 @@ gráficas) y llaman a la simulación.
 | masa de perturbación y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
 | perfil, solver, paso, duración, condiciones iniciales, actuadores | el script (`02_simulacion.py`, secciones 1 a 4) |
+| waypoints, pitch por tramo, duración de la misión (tiempo / misión con timeout), FSM y modelo de inmersión | `escenarios/03_mision.py`, secciones 3 y 4 (guía en [MISION.md](MISION.md)) |
 | controladores: ganancias y funciones `pitch_control`, `roll_control`, `yaw_control` | `gliderjax/autopilot.py` (guía en [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 5) |
-| constantes de la FSM de waypoints | `gliderjax/navigation.py`, líneas 20-36 |
+| constantes de la FSM de waypoints | `gliderjax/fsm/simulink.py`, clase `Config` (o al crearla: `fsm.make("simulink", mision, pitch_down_rad=...)`) |
+| una FSM o un modelo de inmersión alternativo | `gliderjax/fsm/` (guía en [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md), sección 3.1) |
 | ecuaciones del modelo | `gliderjax/dynamics.py` (mapa en [MODELO.md](MODELO.md)) |
 
 El archivo de configuración se revisa al cargar: si falta o sobra una
@@ -79,6 +86,7 @@ Desde `GLIDER_JAX\sim\gliderjax`:
 ..\Scripts\python.exe escenarios\00_balance_estatico.py
 ..\Scripts\python.exe escenarios\01_validacion_dinamica.py
 ..\Scripts\python.exe escenarios\02_simulacion.py
+..\Scripts\python.exe escenarios\03_mision.py
 ..\Scripts\python.exe demos\demo_mission.py
 ```
 

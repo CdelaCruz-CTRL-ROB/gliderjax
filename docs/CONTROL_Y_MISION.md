@@ -1,6 +1,6 @@
 # Control y misión por waypoints
 
-Última actualización: 2026-10-24
+Última actualización: 2026-10-25
 
 ## 1. Arquitectura
 
@@ -10,7 +10,10 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
     ─ Buoy_ref ────────────────────────────────────────────────────────────► dB ±3 N (sin lazo)
 ```
 
-- FSM: `navigation.py::build_fsm` (port "literal" de tu V2, según el port).
+- FSM: una por archivo en `gliderjax/fsm/`. La tuya (Simulink, versión
+  2026-10) es `fsm/simulink.py`; se elige por nombre:
+  `fsm.make("simulink", mision)`. Lo común a todas las FSM (sensores,
+  salidas, GPS, misiones) está en `navigation.py`. Sección 3.
 - Moldeado de referencias: `sim.py::make_ref_pipeline`. Valores de Simulink:
   pitch ±0.1 rad/s → 1/(5s+1); yaw ±0.03 rad/s → 1/(5s+1); roll sin moldeado.
 - Controladores: `autopilot.py::pitch_control`, `roll_control`,
@@ -133,82 +136,158 @@ u      = (1/cos φ) · (KP·e + KD·ė + I − z_g·sin φ)
   tabla da un pico de φ̇_ref (15°/0.25 s = 1 rad/s) en una muestra.
 
 **Flotabilidad: sin lazo.** `dB = BUOY_SIGN · Buoy_ref`, con
-`BUOY_SIGN = −1` (**marcado `CONFIRM`**). Convierte la convención de V2
+`BUOY_SIGN = −1` (**confirmado** contra el diagrama de Simulink: ganancia
+−1 entre `Buoy_ref` y el VBD; BITACORA, entrada 17). Convierte la convención de V2
 (+3 bajar, −3 subir) a la física del VBD (dB negativo = menos flotación =
 baja). El VBD satura en ±4.93 N (carrera completa).
 
-## 3. FSM de waypoints (V2)
+## 3. FSM de waypoints
 
-Constantes en `navigation.py` (líneas 20-36):
+### 3.1 Organización: una FSM por archivo
+
+```
+gliderjax/navigation.py        lo común a todas las FSM: sensores, salidas,
+                               GPS, misiones y su conversión a NED
+gliderjax/fsm/__init__.py      registro: fsm.make("simulink", mision)
+gliderjax/fsm/simulink.py      tu FSM (Simulink, versión 2026-10)
+gliderjax/fsm/dive_models.py   modelos de inmersión (predicción y plan)
+```
+
+**Contrato de una FSM** (`navigation.py`): `fsm.make(nombre, mision)`
+devuelve un `Navigator` con:
+- `carry0`: la memoria inicial (las variables `persistent` de Simulink),
+  con un nombre por entrada (`carry_names`);
+- `step(carry, sens)` → `(carry, out)`, que corre en cada tick del
+  controlador.
+
+`sens` (`Sensors`) es lo que la FSM puede leer:
+- `fix` [lon°, lat°], último fix GPS;
+- `gps_ok`: 1 si el fix es fresco;
+- `depth`, `roll`, `pitch`, `yaw`, `t`.
+
+`out` tiene cinco salidas:
+- `pitch_ref`, `yaw_ref`;
+- `buoy_ref`, en la convención de la FSM (+3 baja); el autopiloto lo
+  multiplica por `BUOY_SIGN = −1`, como la ganancia −1 de Simulink;
+- `turn_sign`: +1 bajada, −1 subida, 0 sin control de rumbo;
+- `mission_complete`.
+
+La FSM no ve la verdad; solo ve los sensores.
+
+**Cómo hacer una FSM alternativa:**
+- **Misma lógica, otro modelo de inmersión** (por ejemplo, contar el giro
+  al calcular la profundidad): escribir un `DiveModel` en
+  `fsm/dive_models.py` y pasarlo:
+  `fsm.make("simulink", mision, dive_model=MI_MODELO)`. Un `DiveModel`
+  tiene dos funciones:
+  - `displacement(yaw_inicio, yaw_ref, prof, cfg)`: el desplazamiento
+    horizontal esperado de una inmersión completa. Lo usa el estimador de
+    deriva.
+  - `plan(vec_al_objetivo, D_norm, yaw_actual, cfg)`: devuelve
+    `(yaw_ref, prof)`.
+
+  La FSM guarda `yaw_at_plan` (el rumbo al planear) para los modelos que lo
+  necesiten. El de Simulink, `STRAIGHT_GLIDE`, no lo usa.
+- **Otra lógica:** copiar `fsm/simulink.py` a un archivo nuevo, cambiarlo y
+  registrarlo en `FSMS` (`fsm/__init__.py`). La memoria puede tener otro
+  tamaño: el autopiloto la guarda al final de `ctrl_state`.
+- **Constantes:** cualquier campo de `Config` se cambia al crear la FSM,
+  por ejemplo `fsm.make("simulink", mision, pitch_down_rad=-0.5)`.
+
+En la telemetría, `autopilot.waypoint_signals(tel, nav)` da todo por
+nombre: el fix, las cinco salidas y cada entrada de la memoria
+(`glider_state`, `current_wp_index`, `D_norm_n`, ...).
+
+### 3.2 Tu FSM (`fsm/simulink.py`)
+
+Port de `fcn_Glider_State_Machine`, versión actual
+(`referencia_simulink/fsm_y_geodesia.m`), con los mismos nombres de
+constantes y variables. Diferencias deliberadas:
+1. `lla2ecef` con `sin(lon)` en `y`. Simulink tiene `cos(lon)`, un error
+   que deforma el mapa de la FSM (BITACORA, entrada 17).
+2. DONE con flotabilidad positiva: `buoy_done_ref = −3`. En Simulink queda
+   en 0 (neutra). Decisión del autor, 2026-10-24.
+3. El modelo de inmersión es intercambiable. El de Simulink es el default.
+4. Pitch por tramo opcional (`leg_pitch`): las inmersiones hacia el
+   waypoint i usan su propio pitch de bajada y de subida. Sin él, es la FSM
+   de Simulink. Se da en la tabla de `03_mision.py` ([MISION.md](MISION.md)).
+
+Constantes (`Config`, en `fsm/simulink.py`):
 
 | Constante | Valor | Significado |
 |---|---|---|
-| `ACCEPT_R` | 90 m | radio de llegada al waypoint |
-| `SURFACE_WAIT` | 30 s | espera en superficie (FIX) |
-| `BOTTOM_WAIT` | 10 s | espera en el fondo |
-| `STAB_TIME` | 10 s | estabilización al salir (SURF) |
-| `PITCH_ANT` | −1.1 rad (−63°) | postura de antena |
-| `PITCH_DN` / `PITCH_UP` | ∓0.6109 rad (∓35°) | pitch de bajada / subida |
-| `BUOY_DN` / `BUOY_UP` | +3 / −3 | flotabilidad (convención V2) |
-| `MAX_DEPTH` | 200 m | profundidad máxima planeada |
-| `TURN_DEPTH` | 2 m | profundidad para pasar de SUB a DIVE |
-| `DEPTH_EPS` | 4 m | margen para llegar a la profundidad planeada |
-| `SURF_EPS` | 1 m | profundidad que cuenta como superficie |
-| `FLARE_DEPTH` | 1 m | inicio del flare (ver problema 2) |
-| `MIN_EST_DEPTH` | 20 m | profundidad mínima para estimar deriva |
-| `K_GLIDE` | 1.4 | razón de planeo supuesta |
-| `ALPHA_F` | 0.8 | filtro del estimador de deriva |
+| `acceptance_radius_m` | 90 m | radio de llegada al waypoint |
+| `surface_wait_time_s` | 60 s | espera en superficie antes de planear (FIX_PLAN) |
+| `bottom_wait_time_s` | 10 s | espera en el fondo |
+| `surface_stabilize_time_s` | 10 s | estabilización al salir (SURFACE_WAIT) |
+| `pitch_antenna_rad` | −1.1 rad (−63°) | postura de antena |
+| `pitch_down_rad` / `pitch_up_rad` | ∓0.6109 rad (∓35°) | pitch de bajada / subida |
+| `buoy_down_ref` / `buoy_up_ref` | +3 / −3 | flotabilidad (convención de la FSM) |
+| `buoy_done_ref` | −3 | flotabilidad en DONE (Simulink: 0) |
+| `max_dive_depth_m` | 200 m | profundidad máxima planeada |
+| `initial_turn_depth_m` | 2 m | de SUBMERGE a DIVE_TURN |
+| `depth_epsilon_m` | 2 m | margen para llegar a la profundidad planeada |
+| `surface_epsilon_m` | 1 m | profundidad que cuenta como superficie |
+| `flare_depth_m` | 3.5 m | inicio del flare |
+| `pitch_flare_target` | −1.1 rad | pitch al final del flare |
+| `flare_duration_s` | 10 s | duración de la rampa del flare |
+| `min_estimation_depth_m` | 15 m | profundidad mínima para estimar deriva |
+| `baseline_glide_ratio` | 1.4 | razón de planeo supuesta (k) |
+| `alpha_filter` | 0.8 | filtro del estimador de deriva |
 
-| # | Estado | pitch_ref | yaw_ref | Buoy (V2) | signo de giro | Sale cuando |
+| # | Estado | pitch_ref | yaw_ref | Buoy | signo de giro | Sale cuando |
 |---|---|---|---|---|---|---|
-| 1 | FIX | −63° | planeado | −3 (positiva) | 0 | pasan 30 s → SUB, o DONE si no quedan waypoints |
-| 2 | SUB | −35° | actual | +3 (negativa) | 0 | prof. > 2 m → DIVE |
-| 3 | DIVE | −35° | planeado | +3 (negativa) | **+1** | llega a prof. planeada − 4 m → BOT |
-| 4 | BOT | 0° | planeado | 0 (neutra) | 0 | pasan 10 s → CLIMB |
-| 5 | CLIMB | +35° | planeado | −3 (positiva) | **−1** | prof. ≤ 1 m → SURF |
-| 6 | DONE | −63° | actual | **0 (neutra)** | 0 | nunca (final) |
-| 7 | SURF | 0° | planeado | −3 (positiva) | 0 | pasan 10 s → FIX |
+| 1 | FIX_PLAN | −63° | planeado | −3 (positiva) | 0 | pasan 60 s → SUBMERGE, o DONE si no quedan waypoints |
+| 2 | SUBMERGE | −35° | actual | +3 (negativa) | 0 | prof. > 2 m → DIVE_TURN |
+| 3 | DIVE_TURN | −35° | planeado (camino corto) | +3 (negativa) | **+1** | prof. planeada − prof. < 2 m → BOTTOM_WAIT |
+| 4 | BOTTOM_WAIT | 0° | planeado | 0 (neutra) | 0 | pasan 10 s → CLIMB |
+| 5 | CLIMB | +35°; flare desde 3.5 m: rampa a −63° en 10 s | planeado | −3 (positiva) | **−1** | prof. ≤ 1 m → SURFACE_WAIT |
+| 6 | DONE | −63° | actual | −3 (positiva) | 0 | nunca (final) |
+| 7 | SURFACE_WAIT | −63° | planeado | −3 (positiva) | 0 | pasan 10 s → FIX_PLAN |
 
-En FIX (al cumplirse los 30 s): toma fix GPS, estima la deriva (si la
-inmersión pasó de 20 m), revisa si llegó al waypoint, y planea rumbo y
-profundidad: `prof = clip(dist_corregida / (2·K_GLIDE), 4 m, 200 m)`.
+En FIX_PLAN, al cumplirse los 60 s:
+1. Lee el fix.
+2. Estima la deriva, si la inmersión pasó de 15 m: compara dónde salió con
+   lo que predice el modelo de inmersión.
+3. Revisa si llegó al waypoint.
+4. Planea el rumbo y la profundidad. Con `STRAIGHT_GLIDE`:
+   `prof = clip(dist_corregida / (2k), 4 m, 200 m)`.
 
-Misiones predefinidas en `navigation.py`: `MISSION_TRIANGLE`,
-`MISSION_SQUARE7`, `MISSION_SQUARE_3KM`, `MISSION_LAWNMOWER`
-(formato `[lon, lat, alt]`).
+Si en ese tick se acaban los waypoints, la salida es la de default
+`[0, yaw, 0, 0, 0]`: es el `return` de Simulink.
 
-**Ejemplo, misión triángulo (2026-10-24, modelo completo):**
-FIX 1 s → SUB 31 s → DIVE 50 s → BOT 474 s (135.6 m) → CLIMB 484 s →
-SURF 922 s → FIX 932 s → … → DONE 1854 s.
+Misiones predefinidas en `navigation.py`: `MISSION_TRIANGLE` (la de tu
+Simulink), `MISSION_SQUARE7`, `MISSION_SQUARE_3KM`, `MISSION_LAWNMOWER`.
+Formato `[lon, lat, h]`, el orden de Fossen y de tu Simulink.
+`check_mission` rechaza una latitud fuera de ±90°: en el Golfo, lat/lon
+invertidas dan "lat = −95" y se detecta.
+
+**Ejemplo, triángulo (2026-10-25, perfil `simulink` + geodesia, control a
+100 Hz, GPS ideal):**
+- SUBMERGE en t = 61 s, prof. planeada 139 m;
+- WP2 a 16 m, en t = 969 s;
+- WP3 a 48 m, en t = 1897 s;
+- DONE en t = 1957 s; queda flotando a z = 0.85 m, pitch −63°.
 
 ## 4. Problemas conocidos
 
-1. **DONE con flotabilidad neutra.** Pide Buoy = 0 y pitch −63°. El
-   planeador queda colgado nariz abajo y se hunde despacio (4.2 → 5.6 m
-   entre t = 4500 y 6000 s). **Debería tener flotabilidad positiva**
-   (autor, 2026-10-24). Arreglo: `BUOY_UP` en lugar de `0.0` en `s_done`
-   (`navigation.py:171`). Pendiente: confirmar si tu V2 también pide 0 (sería
-   un error de V2 que en Simulink no se veía porque la simulación terminaba)
-   o si es un error del port.
-2. **El flare no tiene efecto.** `FLARE_DEPTH = SURF_EPS = 1 m`, así que
-   en CLIMB el denominador del flare es 0: el pitch se queda en +35° hasta
-   pasar a SURF. (Si la profundidad fuera exactamente 1.0 m daría 0/0 = NaN;
-   en la práctica no ocurre.) Pendiente: revisar los valores en tu V2.
-3. **`BUOY_SIGN` marcado `CONFIRM`**: confirmar contra el cableado entre la
-   FSM y el bloque de flotabilidad en Simulink.
-4. **Controladores provisionales** (sección 2). Pendiente: reemplazarlos por
-   tus bloques de Simulink.
-5. **Ruido GPS no implementado** (`gps_sigma_m` existe pero es TODO).
-6. **Peculiaridad de V2:** en el tick en que se acaban los waypoints, la
-   salida de FIX es `[0, yaw, 0, 0, 0]` en lugar de la normal (el port dice
-   que es así en V2).
-7. **Pitch de cada inmersión.** Hoy es fijo para toda la misión
-   (`PITCH_DN`, `PITCH_UP` = ∓35°). Tu `fcn_VBD_actuator` tenía además un
-   pitch automático `p_ref = ±con` según el signo de dB, que el port no
-   tiene. **Decisión (autor, 2026-10-24):** quitar el pitch automático del
-   actuador y dar siempre el pitch explícitamente para cada inmersión.
-   Pendiente para el script de waypoints: pitch de bajada y de subida por
-   inmersión (o por waypoint) como dato de la misión.
+1. **GPS ideal.** Como en Simulink, siempre hay fix con la posición
+   verdadera (`gps_gate_depth = inf`), y la FSM solo lo lee en superficie
+   (FIX_PLAN). Sin ruido y sin revisar si la antena sale del agua. Decisión
+   del autor, 2026-10-25 (BITACORA, entrada 19). Con la compuerta anterior
+   (0.7 m) nunca había fix: en postura de antena (−63°), z ≈ 0.85-1.8 m.
+2. **Deriva falsa por el giro.** Sin corriente, el estimador de deriva da
+   `D_norm` ≈ 0.1-0.2 m/m. El modelo recto no cuenta el giro al inicio de
+   la inmersión. Es justo lo que mejoraría un modelo de inmersión con giro
+   (sección 3.1).
+3. **Ruido GPS no implementado** (`gps_sigma_m` existe pero es TODO).
+4. **Razón de planeo fija.** El pitch ya se da por tramo (decisión del
+   autor, 2026-10-24: sin pitch automático en el actuador). Pero el modelo
+   de inmersión recto supone k = 1.4 con cualquier pitch: a −25° el
+   planeador avanza más y se pasa del waypoint ([MISION.md](MISION.md),
+   pruebas). Pendiente: un modelo que tome k del pitch del tramo.
+5. **El integrador de yaw sigue integrando con `turn_sign = 0`**
+   (superficie, fondo), hasta su tope.
 
 ## 5. Cómo implementar tu controlador
 
@@ -277,7 +356,9 @@ norte, + hacia el este).
 | 8–11 | memoria de yaw (0 = aporte integral KI·∫e, en rad de roll) |
 | 12, 13, 14 | referencias que usaron los lazos: pitch, roll, yaw [rad] (también el valor anterior para las derivadas) |
 | 15–23 | estados del moldeado de referencias |
-| 24–39 | solo misión: FSM y último fix GPS |
+| 24–25 | solo misión: fix GPS [lon°, lat°] |
+| 26–30 | solo misión: salidas de la FSM (`NAV_OUT_NAMES`) |
+| 31– | solo misión: memoria de la FSM (`carry_names`; el tamaño depende de la FSM) |
 
 **Para no perder el provisional:** está en git (`git diff
 gliderjax/autopilot.py` muestra tus cambios; `git show

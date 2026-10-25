@@ -1,42 +1,122 @@
-"""Navigation: V2 state machine (verbatim port), GPS sensor, mission presets.
+"""Navigation: what every state machine (FSM) shares. The FSMs themselves
+live in gliderjax/fsm/, one file each (see gliderjax/fsm/__init__.py).
 
-FSM carry layout (14 floats):
-  [0] state (1..7)      [1] wp_index (1-based)  [2] t_state_start
-  [3] current_yaw_ref   [4] yaw_ref_last_dive   [5] Dist_to_Target
-  [6] current_dive_depth[7] dive_start_n        [8] dive_start_e
-  [9] max_depth_this_dive [10] Dnorm_n [11] Dnorm_e
-  [12] mission_complete [13] dist_to_wp_last_fix
-FSM outputs (5): [pitch_ref, yaw_ref, Buoy_ref, coupling_gain, complete]
-Buoy_ref uses the V2 sign convention (+3 dive, -3 climb); the autopilot maps
-it to the VBD's physical dB (see autopilot.py -- CONFIRM the Simulink sign).
+Contract of a FSM -- anything that follows it plugs into
+autopilot.make_waypoint_controller:
+
+  Navigator(name, carry0, step, carry_names, state_names,
+            waypoints_ned, origin_lla_deg, ecef0)
+  carry, out = step(carry, sens)
+    carry  (n,) floats, the FSM's memory (Simulink: persistent variables);
+           any length, names in carry_names (they show up in telemetry)
+    sens   Sensors: what the FSM may read (no truth beyond the sensors)
+    out    (5,) = NAV_OUT_NAMES: [pitch_ref [rad], yaw_ref [rad],
+           buoy_ref [N, FSM convention: + = dive; autopilot.BUOY_SIGN maps it
+           to the VBD], turn_sign (+1 dive, -1 climb, 0 = no heading control),
+           mission_complete (0/1)]
+  Must be JAX-traceable: jnp only, no python `if` on values.
+
+Missions are lists of waypoints [lon_deg, lat_deg, h] (Fossen's (l, mu, h)
+order, the same as the author's Simulink). The first waypoint is the origin
+of the local NED frame.
 """
-import jax
+from typing import Callable, NamedTuple
+
 import jax.numpy as jnp
 import numpy as np
 
 from .geodesy import lla2ecef, ecef2lla, waypoints_lla_to_ned
 
-# ---- V2 constants (report version) -----------------------------------------
-ACCEPT_R = 90.0
-SURFACE_WAIT = 30.0
-BOTTOM_WAIT = 10.0
-PITCH_ANT = -1.1
-PITCH_DN = -0.6109
-PITCH_UP = 0.6109
-BUOY_DN = 3.0
-BUOY_UP = -3.0
-MAX_DEPTH = 200.0
-DEPTH_EPS = 4.0
-SURF_EPS = 1.0
-TURN_DEPTH = 2.0
-FLARE_DEPTH = 1.0
-STAB_TIME = 10.0
-MIN_EST_DEPTH = 20.0
-K_GLIDE = 1.4
-ALPHA_F = 0.8
+
+class Sensors(NamedTuple):
+    """What a FSM can read each controller tick."""
+    fix: jnp.ndarray       # (2,) [lon_deg, lat_deg], last GPS fix (held underwater)
+    gps_ok: jnp.ndarray    # 1.0 when the fix is fresh (near the surface), else 0.0
+    depth: jnp.ndarray     # [m] depth sensor (z, positive down)
+    roll: jnp.ndarray      # [rad]
+    pitch: jnp.ndarray     # [rad]
+    yaw: jnp.ndarray       # [rad] heading (continuous, may leave +-pi)
+    t: jnp.ndarray         # [s]
+
+
+NAV_OUT_NAMES = ("pitch_ref", "yaw_ref", "buoy_ref", "turn_sign",
+                 "mission_complete")
+
+
+def nav_out(pitch_ref, yaw_ref, buoy_ref, turn_sign, mission_complete):
+    """The FSM output vector, in NAV_OUT_NAMES order."""
+    return jnp.array([pitch_ref, yaw_ref, buoy_ref, turn_sign,
+                      mission_complete], dtype=float)
+
+
+class Navigator(NamedTuple):
+    name: str
+    carry0: jnp.ndarray            # initial memory
+    step: Callable                 # (carry, Sensors) -> (carry, out (5,))
+    carry_names: tuple             # one name per carry entry
+    state_names: tuple             # names of the discrete states (1-based)
+    waypoints_ned: np.ndarray      # (n, 2) [N, E] from the origin [m]
+    origin_lla_deg: np.ndarray     # (3,) first waypoint [lon_deg, lat_deg, h]
+    ecef0: np.ndarray              # (3,) ECEF of the origin: start the sim here
+    config: object = None          # the FSM's constants (for prints and plots)
+
+
+# ---- missions ---------------------------------------------------------------
+def check_mission(mission_lla):
+    """(n, 3) array of [lon_deg, lat_deg, h]; raises if a value cannot be a
+    longitude/latitude (catches [lat, lon] typed by mistake wherever
+    |lon| > 90, e.g. the Gulf of Mexico: lat -95 is impossible)."""
+    m = np.asarray(mission_lla, dtype=float)
+    if m.ndim != 2 or m.shape[1] < 2:
+        raise ValueError("mission: one row per waypoint, [lon_deg, lat_deg, h]")
+    if m.shape[1] == 2:
+        m = np.column_stack([m, np.zeros(len(m))])
+    bad = (np.abs(m[:, 1]) > 90.0) | (np.abs(m[:, 0]) > 180.0)
+    if bad.any():
+        i = int(np.argmax(bad))
+        raise ValueError(f"mission: WP{i + 1} = {m[i, :2].tolist()} is not "
+                         "[lon_deg, lat_deg] (|lat| <= 90). Swapped lat/lon?")
+    return m[:, :3]
+
+
+class MissionGeometry(NamedTuple):
+    origin_lla_deg: np.ndarray     # (3,)
+    ecef0: np.ndarray              # (3,) ECEF of the origin
+    R_e_n: np.ndarray              # (3, 3) ECEF -> NED at the origin
+    waypoints_ned: np.ndarray      # (n, 2) [N, E]
+
+
+def mission_geometry(mission_lla):
+    """Build-time (numpy): waypoints in the local NED frame of the origin."""
+    m = check_mission(mission_lla)
+    _, ecef0, R_e_n, ned = waypoints_lla_to_ned(m)
+    return MissionGeometry(m[0], np.asarray(ecef0), np.asarray(R_e_n),
+                           np.asarray(ned)[:, 0:2])
+
+
+def fix_to_ned(fix_deg, geo: MissionGeometry):
+    """[lon_deg, lat_deg] (h = 0) -> [N, E] from the mission origin (JAX).
+    Same as the author's FSM: lla2ecef, minus the origin, rotated by R_e_n."""
+    lla = jnp.array([jnp.deg2rad(fix_deg[0]), jnp.deg2rad(fix_deg[1]), 0.0])
+    ned = jnp.asarray(geo.R_e_n) @ (lla2ecef(lla) - jnp.asarray(geo.ecef0))
+    return ned[0:2]
+
+
+# ---- GPS --------------------------------------------------------------------
+def gps_fix(p, ecef_truth, depth, held_fix):
+    """GPS sensor: ([lon_deg, lat_deg], ok). Fresh from the ECEF truth only
+    near the surface (depth < gps_gate_depth), otherwise the last fix is held
+    and ok = 0. (Noise via gps_sigma_m: TODO -- needs PRNG threading.)
+    The author's Simulink has no GPS block: its FSM reads the true lat/lon
+    all the time, but only uses it in FIX_PLAN, at the surface."""
+    lla = ecef2lla(ecef_truth)
+    fresh = jnp.array([jnp.rad2deg(lla[0]), jnp.rad2deg(lla[1])])
+    ok = depth < p.gps_gate_depth
+    return jnp.where(ok, fresh, held_fix), jnp.where(ok, 1.0, 0.0)
+
 
 # ---- mission presets (from the V2 waypoint library) -------------------------
-MISSION_TRIANGLE = [[-95.72275, 19.37214, 0.0],
+MISSION_TRIANGLE = [[-95.72275, 19.37214, 0.0],     # = the author's Simulink
                     [-95.72011, 19.37464, 0.0],
                     [-95.72275, 19.37714, 0.0]]
 MISSION_SQUARE7 = MISSION_TRIANGLE + [[-95.71798, 19.37714, 0.0],
@@ -55,133 +135,3 @@ MISSION_LAWNMOWER = [[-95.72275, 19.37214, 0.0],
                      [-95.70367, 19.37214, 0.0],
                      [-95.70367, 19.39014, 0.0],
                      [-95.69412, 19.39014, 0.0]]
-
-
-def gps_fix(p, ecef_truth, depth, held_fix):
-    """GPS sensor: [lon_deg, lat_deg] from ECEF truth, available only near
-    the surface (depth < gps_gate_depth); otherwise the last fix is held.
-    (Noise via gps_sigma_m: TODO -- needs PRNG threading; 0 = ideal.)"""
-    lla = ecef2lla(ecef_truth)
-    fresh = jnp.array([jnp.rad2deg(lla[0]), jnp.rad2deg(lla[1])])
-    ok = depth < p.gps_gate_depth
-    return jnp.where(ok, fresh, held_fix)
-
-
-def build_fsm(mission_lla=MISSION_TRIANGLE):
-    """Returns (carry0 (14,), ecef0 (3,), fsm_step).
-    fsm_step(carry, lla_deg[2], depth, yaw, t) -> (carry', outputs[5])."""
-    _, ecef0, _, wps_ned3 = waypoints_lla_to_ned(mission_lla)
-    WPS = jnp.asarray(wps_ned3[:, 0:2])          # (n,2) NED
-    NWP = WPS.shape[0]
-    origin_lla, ecef_org, Ren, _ = waypoints_lla_to_ned(mission_lla)
-    ECEF_ORG = jnp.asarray(ecef_org)
-    REN = jnp.asarray(Ren)
-
-    def lla_deg_to_ned(lla_deg):
-        lla = jnp.array([jnp.deg2rad(lla_deg[0]), jnp.deg2rad(lla_deg[1]), 0.0])
-        d = lla2ecef(lla) - ECEF_ORG
-        ned = REN @ d
-        return ned[0], ned[1]
-
-    def wp(idx1):                                 # 1-based, clamped
-        i = jnp.clip(idx1.astype(jnp.int32) - 1, 0, NWP - 1)
-        return WPS[i]
-
-    def out(pitch, yawr, buoy, turn_sign, done):
-        return jnp.array([pitch, yawr, buoy, turn_sign, done])
-
-    # ---- branches: (carry, lla, depth, yaw, t) -> (carry', out5) -----------
-    def s_fix_plan(c, lla, depth, yaw, t):
-        tis = t - c[2]
-        ready = tis >= SURFACE_WAIT
-        cn, ce = lla_deg_to_ned(lla)
-        cur = jnp.array([cn, ce])
-        # disturbance estimator (V2 lines 225-243)
-        est_ok = c[9] > MIN_EST_DEPTH
-        exp_vec = (2.0 * c[9] * K_GLIDE) * jnp.array([jnp.cos(c[4]), jnp.sin(c[4])])
-        Dn_est = (cur - (c[7:9] + exp_vec)) / jnp.maximum(c[9], 1e-6)
-        Dn_new = ALPHA_F * Dn_est + (1 - ALPHA_F) * c[10:12]
-        Dn = jnp.where(ready & est_ok, Dn_new, c[10:12])
-        # arrival check
-        d0 = jnp.linalg.norm(wp(c[1]) - cur)
-        arrived = ready & (d0 < ACCEPT_R)
-        wpi = jnp.where(arrived, c[1] + 1.0, c[1])
-        exhausted = wpi > NWP
-        tgt = wp(wpi)
-        # plan (V2 lines 292-329; note the depth-guess cancellation)
-        vec = tgt - cur
-        dist = jnp.linalg.norm(vec)
-        drift = Dn * dist / (2.0 * K_GLIDE)       # = Dnorm*Dist/(2k), exact
-        req = vec - drift
-        yaw_plan = jnp.arctan2(req[1], req[0])
-        depth_plan = jnp.clip(jnp.linalg.norm(req) / (2.0 * K_GLIDE),
-                              TURN_DEPTH * 2.0, MAX_DEPTH)
-        go = ready & (~exhausted)
-        c = c.at[10:12].set(Dn)
-        c = c.at[1].set(wpi)
-        c = c.at[13].set(jnp.where(ready, dist, c[13]))
-        c = c.at[5].set(jnp.where(ready, dist, c[5]))
-        c = c.at[3].set(jnp.where(go, yaw_plan, c[3]))
-        c = c.at[4].set(jnp.where(go, yaw_plan, c[4]))
-        c = c.at[6].set(jnp.where(go, depth_plan, c[6]))
-        c = c.at[7].set(jnp.where(go, cn, c[7]))
-        c = c.at[8].set(jnp.where(go, ce, c[8]))
-        c = c.at[9].set(jnp.where(go, 0.0, c[9]))
-        c = c.at[0].set(jnp.where(go, 2.0, jnp.where(ready & exhausted, 6.0, 1.0)))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        # V2 'return' quirk: on the exhausted tick, outputs are the defaults
-        o_norm = out(PITCH_ANT, c[3], BUOY_UP, 0.0, 0.0)
-        o_exh = out(0.0, yaw, 0.0, 0.0, 0.0)
-        return c, jnp.where(ready & exhausted, o_exh, o_norm)
-
-    def s_submerge(c, lla, depth, yaw, t):
-        c = c.at[9].set(jnp.maximum(c[9], depth))
-        go = depth > TURN_DEPTH
-        c = c.at[0].set(jnp.where(go, 3.0, 2.0))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        return c, out(PITCH_DN, yaw, BUOY_DN, 0.0, 0.0)
-
-    def s_dive_turn(c, lla, depth, yaw, t):
-        # yaw unwrap (shortest path, persisted -- V2 lines 236-239 semantics)
-        cyr = yaw + jnp.arctan2(jnp.sin(c[3] - yaw), jnp.cos(c[3] - yaw))
-        c = c.at[3].set(cyr)
-        c = c.at[9].set(jnp.maximum(c[9], depth))
-        go = (c[6] - depth) < DEPTH_EPS
-        c = c.at[0].set(jnp.where(go, 4.0, 3.0))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        return c, out(PITCH_DN, cyr, BUOY_DN, 1.0, 0.0)
-
-    def s_bottom_wait(c, lla, depth, yaw, t):
-        c = c.at[9].set(jnp.maximum(c[9], depth))
-        go = (t - c[2]) > BOTTOM_WAIT
-        c = c.at[0].set(jnp.where(go, 5.0, 4.0))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        return c, out(0.0, c[3], 0.0, 0.0, 0.0)
-
-    def s_climb(c, lla, depth, yaw, t):
-        prog = jnp.clip((FLARE_DEPTH - depth) / (FLARE_DEPTH - SURF_EPS), 0.0, 1.0)
-        pitch = jnp.where(depth > FLARE_DEPTH, PITCH_UP, PITCH_UP * (1.0 - prog))
-        go = depth <= SURF_EPS
-        c = c.at[0].set(jnp.where(go, 7.0, 5.0))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        return c, out(pitch, c[3], BUOY_UP, -1.0, 0.0)
-
-    def s_done(c, lla, depth, yaw, t):
-        c = c.at[12].set(1.0)
-        return c, out(PITCH_ANT, yaw, 0.0, 0.0, 1.0)
-
-    def s_surface_wait(c, lla, depth, yaw, t):
-        go = (t - c[2]) >= STAB_TIME
-        c = c.at[0].set(jnp.where(go, 1.0, 7.0))
-        c = c.at[2].set(jnp.where(go, t, c[2]))
-        return c, out(0.0, c[3], BUOY_UP, 0.0, 0.0)
-
-    branches = [s_fix_plan, s_submerge, s_dive_turn, s_bottom_wait,
-                s_climb, s_done, s_surface_wait]
-
-    def fsm_step(carry, lla_deg, depth, yaw, t):
-        idx = jnp.clip(carry[0].astype(jnp.int32) - 1, 0, 6)
-        return jax.lax.switch(idx, branches, carry, lla_deg, depth, yaw, t)
-
-    carry0 = jnp.zeros(14).at[0].set(1.0).at[1].set(1.0).at[6].set(MAX_DEPTH)
-    return carry0, jnp.asarray(ecef0), fsm_step

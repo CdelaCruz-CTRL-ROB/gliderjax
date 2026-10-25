@@ -29,7 +29,7 @@ cada uno. Los switches están en el mismo archivo, como perfiles
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
 | **Superficie completa** (9 estaciones, masa añadida, entrada y radiación) | **Agregado por el port** | `dynamics.py::surface_state, tau_surface` | `surface_model="full"` (default) |
-| **Geodesia** (posición ECEF verdadera) | **Agregado por el port** | `dynamics.py`, `geodesy.py` | `use_geodesy=True` (default) |
+| Geodesia (posición ECEF verdadera: R_n_e·ṗ integrado, ecef2lla) | Simulink, versión con waypoints (`fcn_get_R_n_e`, `fcn_ecef2lla`), **verificado** (BITACORA, entrada 17). `lla2ecef` corregido: Simulink usa cos(lon) en y | `dynamics.py`, `geodesy.py` | `use_geodesy` (`simulink`: false, `completo`: true) |
 | Bloques C_A (Coriolis de masa añadida) | Tu Simulink lo calcula pero lo anula (`C_RB + C_A*0`), **verificado**. El port lo puede encender, pero con otra matriz (`MA_hull`) | `dynamics.py::C_added` | `use_ca_omega`, `use_ca_translational` (default False = Simulink) |
 | Amortiguamiento ∝ V (KpV, KqV, KrV) | Agregado, valores en 0 | `tau_rot_damping` | siempre, sin efecto |
 

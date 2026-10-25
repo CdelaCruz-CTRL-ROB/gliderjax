@@ -144,14 +144,9 @@ def make_ref_pipeline(dt,
     return state0, step
 
 
-def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
-                   dt: float = 0.05, decimate: int = 20, ctrl_every: int = 10,
-                   solver: str = "ode4"):
-    """Build a JIT-compiled simulate(params, x0, n_frames) -> telemetry dict.
-
-    Telemetry arrays have leading axis n_frames (time = tel["t"]).
-    solver: key of SOLVERS ("ode1", "ode2", "ode4").
-    """
+def _make_frame(controller, cfg, dt, decimate, ctrl_every, solver):
+    """One telemetry frame = `decimate` integration steps. Carry =
+    (x, ctrl_state, cmds, t, k)."""
     if solver not in SOLVERS:
         raise ValueError(f"solver '{solver}' unknown; use one of {list(SOLVERS)}")
     step = SOLVERS[solver]
@@ -185,6 +180,19 @@ def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
         #  any other signal: scope(tel, ["ctrl_state:0"])
         return carry, tel
 
+    return frame
+
+
+def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
+                   dt: float = 0.05, decimate: int = 20, ctrl_every: int = 10,
+                   solver: str = "ode4"):
+    """Build a JIT-compiled simulate(params, x0, n_frames) -> telemetry dict.
+
+    Telemetry arrays have leading axis n_frames (time = tel["t"]).
+    solver: key of SOLVERS ("ode1", "ode2", "ode4").
+    """
+    frame = _make_frame(controller, cfg, dt, decimate, ctrl_every, solver)
+
     @functools.partial(jax.jit, static_argnums=(2,))
     def simulate(p: GliderParams, x0: jnp.ndarray, n_frames: int):
         cmds0, _ = controller(0.0, x0, ctrl_state0, p)
@@ -194,6 +202,31 @@ def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
         return tel
 
     return simulate
+
+
+def make_resumable_simulator(controller: Callable, ctrl_state0: Any,
+                             cfg: ModelConfig, dt: float = 0.05,
+                             decimate: int = 20, ctrl_every: int = 10,
+                             solver: str = "ode4"):
+    """Same simulation as make_simulator, in blocks that continue where the
+    previous one stopped (e.g. run until the mission ends):
+        carry = start(params, x0)
+        carry, tel = run(params, carry, n_frames)    # repeat as needed
+    carry = (x, ctrl_state, cmds, t, k). Calling run with the same n_frames
+    does not recompile."""
+    frame = _make_frame(controller, cfg, dt, decimate, ctrl_every, solver)
+
+    @jax.jit
+    def start(p: GliderParams, x0: jnp.ndarray):
+        cmds0, _ = controller(0.0, x0, ctrl_state0, p)
+        return (x0, ctrl_state0, cmds0, jnp.asarray(0.0), jnp.asarray(0))
+
+    @functools.partial(jax.jit, static_argnums=(2,))
+    def run(p: GliderParams, carry, n_frames: int):
+        return jax.lax.scan(lambda c, _: frame(c, _, p), carry, None,
+                            length=n_frames)
+
+    return start, run
 
 
 def make_batch_simulator(simulate):

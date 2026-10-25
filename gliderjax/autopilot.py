@@ -11,8 +11,9 @@ Three modes, one architecture (all compatible with make_simulator):
                   attitude loops + reference shaping, NO state machine.
                   roll_from_yaw=False: pitch and roll loops on their own
                   (roll_ref from the table); True: yaw loop -> roll_ref
-  WAYPOINT        make_waypoint_controller(mission):
-                  full V2 FSM -> reference shaping -> attitude loops
+  WAYPOINT        make_waypoint_controller(navigator):
+                  FSM (any, see gliderjax/fsm/) -> reference shaping ->
+                  attitude loops
 
 roll_control is the author's roll law (nonlinear PID with gravity
 compensation; the d_phi, m_phi and Sigma_psi terms are not in yet).
@@ -31,17 +32,18 @@ ctrl_state layout, all scope-able via tel["ctrl_state"] (scope "ctrl_state:i"):
   [12:15]  references the loops used [pitch, roll, yaw] [rad] (also the
            previous value for ref_dot)
   [15:24]  reference shaping states (3x3)
-  waypoint mode only:
-  [24:38]  FSM carry (see navigation.py)
-  [38:40]  held GPS fix [lon_deg, lat_deg]
+  waypoint mode only (read them by name with waypoint_signals):
+  [24:26]  GPS fix [lon_deg, lat_deg] (held underwater)
+  [26:31]  FSM outputs, navigation.NAV_OUT_NAMES
+  [31:]    FSM carry, navigator.carry_names (length depends on the FSM)
 """
 import jax.numpy as jnp
+import numpy as np
 
 from .params import G0
 from .dynamics import T_euler
 from .sim import make_ref_pipeline
-from .navigation import build_fsm, gps_fix
-from .geodesy import ecef2lla
+from .navigation import gps_fix, Sensors, NAV_OUT_NAMES
 
 # ---- placeholder attitude gains (tuned for the CIDESI soft-z_g vehicle) ----
 KP_P, KD_P, KI_P = 0.015, 0.08, 0.005       # pitch PID (x_g units / rad)
@@ -231,34 +233,52 @@ def make_attitude_controller(refs_fn, dt_ctrl, roll_from_yaw=True,
     return jnp.concatenate([jnp.zeros(n), used0, ref0.ravel()]), controller
 
 
-def make_waypoint_controller(mission, dt_ctrl, ref_pipeline_kwargs=None):
-    """WAYPOINT mode: FSM -> reference shaping -> attitude cascade.
-    Returns (ctrl_state0, controller, ecef0). Initialize the sim with
-    initial_state(..., ecef0=ecef0) so GPS truth starts at the origin."""
-    kw = ref_pipeline_kwargs or {}
-    ref0, ref_step = make_ref_pipeline(dt_ctrl, **kw)
-    fsm0, ecef0, fsm_step = build_fsm(mission)
-    origin_deg = jnp.array([mission[0][0], mission[0][1]])
+CS_FIX, CS_NAV_OUT, CS_NAV = 24, 26, 31      # waypoint-mode ctrl_state slots
 
+
+def make_waypoint_controller(nav, dt_ctrl, ref_pipeline_kwargs=None,
+                             init_refs=(0.0, 0.0, 0.0)):
+    """WAYPOINT mode: navigator (FSM) -> reference shaping -> attitude loops.
+    nav = gliderjax.fsm.make(name, mission). Returns (ctrl_state0,
+    controller). Start the sim at the mission origin:
+    build_initial_state(..., ecef0=nav.ecef0).
+    init_refs = (pitch, yaw, roll) [rad], the initial attitude: the shaped
+    references start there (as in make_attitude_controller)."""
+    kw = dict(ref_pipeline_kwargs or {})
+    kw.setdefault("init", tuple(init_refs))
+    ref0, ref_step = make_ref_pipeline(dt_ctrl, **kw)
     n = 3 * N_MEM
+    pitch0, yaw0, roll0 = kw["init"]
+    used0 = jnp.array([pitch0, roll0, yaw0], dtype=float)
 
     def controller(t, x, cs, params):
         mem, used = cs[0:n], cs[n:n + 3]
         ref_s = cs[n + 3:n + 12].reshape(3, 3)
-        fsm_c = cs[n + 12:n + 26]
-        held = cs[n + 26:n + 28]
-        depth = x[2]
-        # GPS (gated on surfacing; holds last fix underwater)
-        fix = gps_fix(params, x[23:26], depth, held)
-        # FSM tick
-        fsm_c, o = fsm_step(fsm_c, fix, depth, x[5], t)
+        held = cs[CS_FIX:CS_FIX + 2]
+        carry = cs[CS_NAV:]
+        fix, gps_ok = gps_fix(params, x[23:26], x[2], held)
+        sens = Sensors(fix=fix, gps_ok=gps_ok, depth=x[2], roll=x[3],
+                       pitch=x[4], yaw=x[5], t=t)
+        carry, o = nav.step(carry, sens)
         # reference shaping (pitch & yaw; roll_ref comes from the yaw loop)
         ref_s, shaped = ref_step(ref_s, jnp.array([o[0], o[1], 0.0]))
         cmds, mem, used = attitude_step(x, params, shaped, o[3], mem, used,
                                         dt_ctrl, roll_from_yaw=True)
         cmds = cmds.at[2].set(BUOY_SIGN * o[2])
-        cs = jnp.concatenate([mem, used, ref_s.ravel(), fsm_c, fix])
-        return cmds, cs
+        return cmds, jnp.concatenate([mem, used, ref_s.ravel(), fix, o, carry])
 
-    cs0 = jnp.concatenate([jnp.zeros(n + 3), ref0.ravel(), fsm0, origin_deg])
-    return cs0, controller, ecef0
+    cs0 = jnp.concatenate([jnp.zeros(n), used0, ref0.ravel(),
+                           jnp.asarray(nav.origin_lla_deg[0:2], dtype=float),
+                           jnp.zeros(len(NAV_OUT_NAMES)), nav.carry0])
+    return cs0, controller
+
+
+def waypoint_signals(tel, nav):
+    """Waypoint-mode signals from tel["ctrl_state"], by name: fix_lon_deg,
+    fix_lat_deg, the FSM outputs (NAV_OUT_NAMES) and its carry
+    (nav.carry_names). numpy arrays over the telemetry frames."""
+    cs = np.asarray(tel["ctrl_state"])
+    sig = {"fix_lon_deg": cs[:, CS_FIX], "fix_lat_deg": cs[:, CS_FIX + 1]}
+    sig.update({k: cs[:, CS_NAV_OUT + i] for i, k in enumerate(NAV_OUT_NAMES)})
+    sig.update({k: cs[:, CS_NAV + i] for i, k in enumerate(nav.carry_names)})
+    return sig

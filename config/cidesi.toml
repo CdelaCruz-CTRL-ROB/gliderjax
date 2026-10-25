@@ -164,7 +164,10 @@ chi_width = 0.12            # [rad] ancho de la transición
 [gps]
 # -----------------------------------------------------------------------------
 gps_sigma_m = 0.0           # [m] ruido del fix, 1 sigma. NO SE USA (TODO)
-gps_gate_depth = 0.7        # [m] hay fix solo si z < esto
+gps_gate_depth = inf        # [m] hay fix solo si z < esto. inf = siempre hay
+#                             fix, como Simulink: la FSM solo lo lee en
+#                             superficie (FIX_PLAN). Con 0.7 nunca había fix:
+#                             en postura de antena z = 0.85-1.8 m (entrada 18)
 
 
 # -----------------------------------------------------------------------------
