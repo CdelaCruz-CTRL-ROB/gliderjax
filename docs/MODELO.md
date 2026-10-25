@@ -20,12 +20,12 @@ cada uno. Los switches están en el mismo archivo, como perfiles
 | Amortiguamiento rotacional D_body | Simulink, **verificado** | `dynamics.py::tau_rot_damping` | `use_rot_damping=True` (default) |
 | Presupuesto de 4 masas, M_RB, I_b, r_g | Simulink (Mbr+Ma fcn, fcn_r_lin), **verificado** (secciones 2.2 y 2.5); inercia de la masa rotatoria **corregida** | `dynamics.py::mass_geometry, M_rigid` | siempre |
 | C_RB (Coriolis de cuerpo rígido) | Simulink (calculate_coriolis_total_fossen), **verificado** (sección 2.3) | `dynamics.py::C_rigid` | siempre |
-| Masa añadida MA | Simulink, **verificado**, con simetría babor–estribor impuesta (sección 2.2) | `config/cidesi.toml`, `[masa_anadida]` | siempre |
+| Masa añadida MA | Simulink, **verificado**; solo la diagonal (los acoplamientos de 0.1 y 0.01 en 0, sección 2.2) | `config/cidesi.toml`, `[masa_anadida]` | siempre |
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), **verificado** (sección 2.4) | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
 | Cadenas de actuadores (TFs, limitadores de tasa) | Simulink, según el port; **varios valores marcados CONFIRMAR** | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Reporte, g(η), según el port | `dynamics.py::tau_restoring` | siempre |
 | Perturbación de CG (disturb_xg, disturb_yg) | Simulink, **verificado** en Mbr+Ma fcn: entra en r_g (C_RB, restauración), no en M ni en I_b | `dynamics.py::dynamics` | `replicate_disturb_wiring=True` |
-| Perturbación de la masa móvil (disturb_xlin) | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
+| Perturbación de la masa móvil (disturb_xlin): error en el cero virtual del actuador | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
 | Superficie de 2 puntos (B_scale, Δx_b) | Simulink (fcn_buoyancy_surface), **verificado** (sección 2.6) | `dynamics.py::surface_two_point` | `surface_model="simulink"` |
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
@@ -56,14 +56,18 @@ tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 1. **Inercia de la masa rotatoria**: el port usa `R·I·Rᵀ`, la consistente
    con la posición de la masa; tu Simulink tiene `Rᵀ·I·R` (error). Decisión
    del autor, 2026-10-24: no replicar el error. Sección 2.2.
-2. **Masa añadida**: se impuso simetría babor–estribor a tus valores.
-   Sección 2.2.
-3. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
+2. **Masa añadida**: solo la diagonal; tus acoplamientos de 0.1 y 0.01
+   van en 0. Sección 2.2.
+3. **Flotabilidad neutra**: igual al peso total, calculado con las masas
+   del archivo de configuración; tu Simulink la tiene fija en 58·g. Así el
+   planeador es neutro con dB = 0 para cualquier juego de masas. Sección
+   2.4.
+4. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
    no se porta. El pitch de cada inmersión lo da la misión. Sección 2.4.
 
 Falta verificar: el bloque que arma el vector de restauración (el port
-supone `r_b = [x_b + Δx_b, 0, 0]` y `B·B_scale`) y las cadenas de
-actuadores (valores CONFIRMAR).
+usa `r_b = [x_b + Δx_b, 0, 0]` y `B·B_scale`, confirmado por el autor) y
+las cadenas de actuadores (valores CONFIRMAR).
 
 ## 2. Comparación con tus funciones de Simulink
 
@@ -107,7 +111,7 @@ Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
 | I_b | `Σ (Iᵢ − mᵢ s(rᵢ)²)` | `Σ about_CO(Iᵢ, mᵢ, rᵢ)` | sí |
 | r_g | `Σ mᵢ rᵢ / m` + dist_xg, dist_yg | `r_g_dist` (con `disturb_xg`, `disturb_yg`) | sí |
 | dist en M e I_b | no entra (M se arma con posiciones sin perturbar) | `replicate_disturb_wiring=True` | sí |
-| MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) en todos los acoplamientos | mismos valores, solo en u–w y p–r | **no, a propósito**: ver abajo |
+| MA, IA | diagonal + 0.1 (MA) y 0.01 (IA) en todos los acoplamientos | solo la diagonal | **no, a propósito**: ver abajo |
 | CA (acoplamiento traslación–rotación de M_A) | 0 (`2.57*0`) | 0 | sí |
 | M = M_RB + M_A | sí | sí | sí |
 
@@ -126,7 +130,7 @@ Referencia: [referencia_simulink/fcn_Mbr_Ma.m](referencia_simulink/fcn_Mbr_Ma.m)
 - **Decisión (autor, 2026-10-24):** usar la correcta, `R·I·Rᵀ`, sin opción
   para replicar el error.
 
-**Diferencia 2: simetría de la masa añadida.**
+**Diferencia 2: acoplamientos de la masa añadida.**
 
 Dos ideas distintas:
 
@@ -143,16 +147,18 @@ Dos ideas distintas:
 - u–w y p–r **sí** pueden existir: el casco no es simétrico arriba–abajo
   (aleta vertical, antena).
 
-**Decisión (autor, 2026-10-24):** simetría babor–estribor. Se conservan
-tus 0.1 (u–w) y 0.01 (p–r); u–v, v–w, p–q y q–r en cero. Si esos 0.1 y
-0.01 eran relleno, basta ponerlos en 0 en `config/cidesi.toml`.
+**Decisión (autor, 2026-10-24):** todos los acoplamientos en 0, solo la
+diagonal. (Primero se probó conservar u–w y p–r; el autor indicó que esos
+valores no importan.) Si en el futuro hay datos de CFD para u–w, u–q,
+w–q, p–r, v–p o v–r, se escriben en `[masa_anadida]` del archivo de
+configuración.
 
 **Efecto medido** (escenario de validación, 1200 s, contra MA diagonal):
 
 | Variante | Posición horizontal | Profundidad | Roll | Pitch | Yaw |
 |---|---|---|---|---|---|
 | inercia `Rᵀ·I·R` de Simulink | 0.0003 m | < 0.0001 m | 0.0006° | 0.0009° | 0.0009° |
-| MA simétrica (la adoptada) | 0.012 m | 0.001 m | 0.004° | 0.001° | 0.010° |
+| MA solo con u–w y p–r | 0.012 m | 0.001 m | 0.004° | 0.001° | 0.010° |
 | MA de Simulink completa | 0.38 m | 0.0007 m | 0.008° | 0.005° | 0.13° |
 
 Los valores cuasi-estacionarios por fase no cambian en ningún decimal
@@ -189,7 +195,7 @@ Referencia: [referencia_simulink/fcn_VBD_actuator.m](referencia_simulink/fcn_VBD
 | Parte | Simulink | Port (`vbd_outputs`, `dxv_from_dB_ref`) | ¿Igual? |
 |---|---|---|---|
 | ρ, g | 1000, 9.81 | `RHO`, `G0` | sí |
-| B_neutral | `W_total = 58*9.81` (constante) | `m_displaced·g`, `m_displaced = 58` | sí (antes el port usaba la suma de las masas: igual con los valores actuales, pero se movía si cambiabas una masa) |
+| B_neutral | `W_total = 58*9.81` (constante) | peso total: (m_static + m_lin + m_rot + m_pist)·g | igual con las masas actuales; **a propósito** sigue a las masas, ver abajo |
 | Área | `pi*(0.08/2)^2` | `pi*(vbd_diam/2)^2` | sí (antes `3.14159265*0.04^2`, diferencia relativa 1e-9) |
 | Δx pedido y saturación | `−(dB/(ρg))/área`, ±carrera/2 | igual | sí |
 | r_p | `[x0 + Δx, 0, 0]`, x0 = −0.7 | igual | sí |
@@ -197,6 +203,12 @@ Referencia: [referencia_simulink/fcn_VBD_actuator.m](referencia_simulink/fcn_VBD
 | x_b | `ΔB·(x0 + Δx/2)/B_total` (rb_neutral = 0) | igual | sí |
 | `percent_fill`, `delta_V_actual` | salidas de monitoreo | no se calculan | no afecta la dinámica |
 | `p_ref` | ±`con` según el signo de dB | **no se porta** | a propósito, ver abajo |
+
+**Flotabilidad neutra.** El port la calcula con las masas del archivo de
+configuración, no fija en 58·g. **Decisión (autor, 2026-10-24):** se van a
+hacer experimentos cambiando parámetros, y el planeador debe seguir siendo
+neutro con dB = 0. Verificado: con m_lin = 18, m_static = 40, o m_rot = 7
+y m_pist = 1.5, B − W = 0 con dB = 0.
 
 **p_ref (pitch automático según el signo de dB).** Tu bloque daba un pitch
 de referencia ±`con` al bajar o subir, y el control de pitch tenía un switch
@@ -222,8 +234,13 @@ Referencia: [referencia_simulink/fcn_r_lin.m](referencia_simulink/fcn_r_lin.m)
 
 `distxlin` se llama `disturb_xlin` en el port (para no confundir "dist"
 con distancia; por lo mismo, `dist_xg`, `dist_yg` → `disturb_xg`,
-`disturb_yg`). A diferencia de `disturb_xg`, esta perturbación sí entra en
-M, I_b y r_g, porque cambia la posición de una masa real.
+`disturb_yg`).
+
+**Qué representa** (autor, 2026-10-24): que rc no queda donde el control
+cree, es decir, el cero virtual del actuador está mal calculado. Como
+entra en r_lin, pasa por Mbr+Ma fcn y afecta todo: M, I_b, r_g y la
+restauración. A diferencia de `disturb_xg`/`disturb_yg`, que se suman a r_g
+después de armar M.
 
 Ejemplo de su efecto: `disturb_xlin = 5 mm` en la prueba de validación lleva
 el pitch de bajada de −38.5° a −44.5° y el de subida de +36.6° a +29.1°.
@@ -241,9 +258,8 @@ Port exacto en `dynamics.py::surface_two_point`, con
   `clip(−z_tope/H, 0, 1)`.
 - `B_scale = 1 − promedio`, `Δx_b = −(L/2)·(e_nariz − e_cola)/(e_nariz + e_cola)·promedio`.
 - Conexión: `B = B_total·B_scale` y `x_b = x_b(VBD) + Δx_b`, antes del
-  vector de restauración. **Supuesto:** que `B_scale` multiplica a B (el
-  autor escribió "las sumo a x_b y a B"; para `B_scale`, que va de 0 a 1,
-  tiene sentido multiplicar). Por confirmar.
+  vector de restauración. Confirmado por el autor (2026-10-24): `B_scale`
+  multiplica a B y `Δx_b` se suma a x_b.
 - `L = hull_L = 1.8`, `H = hull_H = 0.2` (`[superficie]` del archivo de
   configuración).
 

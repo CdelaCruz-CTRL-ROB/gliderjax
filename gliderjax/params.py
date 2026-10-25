@@ -44,7 +44,6 @@ class GliderParams(NamedTuple):
     I_pist: jnp.ndarray
 
     # ----- VBD geometry (exact port of fcn_VBD_actuator) -------------------
-    m_displaced: jnp.ndarray   # displaced water at neutral: B_neutral = m g
     vbd_area: jnp.ndarray      # piston area
     vbd_max_disp: jnp.ndarray  # half stroke
     vbd_x0: jnp.ndarray        # piston station

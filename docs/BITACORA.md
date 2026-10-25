@@ -15,12 +15,15 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Comparar contra `fcn_VBD_actuator`, `fcn_buoyancy_surface` y
       `fcn_r_lin`.
 - [x] Inercia de la masa rotatoria: R·I·Rᵀ (decisión del autor).
-- [x] Masa añadida con simetría babor–estribor (decisión del autor).
+- [x] Masa añadida: solo la diagonal (decisión del autor).
 - [x] Archivo de configuración `config/cidesi.toml`.
-- [ ] Confirmar que `B_scale` de la superficie **multiplica** a B (el
-      autor escribió "las sumo a x_b y a B").
-- [ ] ¿Los 0.1 (u–w) y 0.01 (p–r) de la masa añadida son datos o relleno?
-      Si son relleno, ponerlos en 0 en el archivo de configuración.
+- [x] Superficie: `B_scale` multiplica a B, `Δx_b` se suma a x_b
+      (confirmado).
+- [x] Flotabilidad neutra = peso total, sigue a las masas.
+- [ ] `disturb_xg`/`disturb_yg`: el autor lo está pensando (hoy entran en
+      r_g después de armar M, como en Simulink).
+- [ ] Barridos de parámetros: correr varias variantes y superponerlas
+      ("mover todo y ver qué da").
 - [ ] Verificar el bloque que arma el vector de restauración.
 - [ ] Confirmar `BUOY_SIGN` y los demás valores marcados CONFIRMAR
       (cadenas de actuadores en `[actuadores]`).
@@ -36,6 +39,42 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (5) — Flotabilidad neutra sigue a las masas; MA diagonal
+
+### Decisiones del autor
+
+- **La flotabilidad neutra debe seguir a las masas.** Se van a hacer
+  experimentos con distintos parámetros. Se revirtió el cambio del commit
+  anterior (`m_displaced` fijo en 58 kg, como el `W_total` de Simulink):
+  otra vez `B_neutral = (m_static + m_lin + m_rot + m_pist)·g`.
+- **Masa añadida: acoplamientos en 0**, solo la diagonal.
+- **Superficie:** confirmado, `B_scale` multiplica a B y `Δx_b` se suma
+  a x_b.
+- **`disturb_xlin`** representa un error en el cero virtual de la masa
+  móvil (rc no queda donde el control cree). Entra en todo: M, I_b, r_g,
+  restauración. Así está en el port.
+- `disturb_xg`/`disturb_yg` (entran en r_g después de M): pendiente, el
+  autor lo está pensando.
+
+### Verificación
+
+- Con la MA anterior, el código nuevo da exactamente lo mismo que el commit
+  anterior (0.0): con las masas actuales, la suma es 58 kg.
+- MA diagonal vs la anterior: 1.2 cm horizontal en 1200 s; la tabla por
+  fase no cambia en ningún decimal.
+- B − W = 0 con dB = 0 para m_lin = 18, m_static = 40, y m_rot = 7 con
+  m_pist = 1.5.
+
+### Experimento: m_lin = 18 kg con los mismos comandos
+
+El CG se va adelante: bajada a −72° (vs −38°). En la subida (rc = −0.03)
+la masa no alcanza a levantar la nariz: queda a −49° con α ≈ −100° y sube
+a 0.05 m/s. Los comandos en lazo abierto están ajustados al vehículo base;
+con otras masas hay que volver a ajustar rc (en lazo cerrado lo haría el
+control). Además ese α está fuera del rango donde vale el modelo en α y β.
 
 ---
 

@@ -55,7 +55,7 @@ gráficas) y llaman a la simulación.
 |---|---|
 | masas, inercias, masa añadida, coeficientes hidrodinámicos, amortiguamiento | `config/cidesi.toml` |
 | actuadores (FT, limitadores de tasa, saturaciones) | `config/cidesi.toml`, `[actuadores]` y `[masas]` |
-| VBD (diámetro, carrera, estación, flotabilidad neutra) | `config/cidesi.toml`, `[vbd]` |
+| VBD (diámetro, carrera, estación del pistón) | `config/cidesi.toml`, `[vbd]` (la flotabilidad neutra = peso total, sigue a las masas) |
 | perturbaciones (CG, masa móvil) y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
 | qué perfil usa una prueba, paso de integración | el script, sección 1 (`MODELO`, `DT`) |

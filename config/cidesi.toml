@@ -43,11 +43,9 @@ I_pist = [4.5521678e-4, 1.245908523e-2, 1.245908523e-2]  # [kg m^2]
 # -----------------------------------------------------------------------------
 [vbd]                       # fcn_VBD_actuator.m
 # -----------------------------------------------------------------------------
-m_displaced = 58.0          # [kg] agua desplazada con el pistón en neutro:
-#                             B_neutral = m_displaced * g (Simulink: W_total = 58*9.81).
-#                             Si cambias masas y no esto, el planeador queda
-#                             fuera de neutro (como pasaría en la realidad).
-vbd_diam = 0.08             # [m] diámetro del pistón  -> área = pi (d/2)^2
+# Flotabilidad neutra = peso total (suma de las 4 masas de [masas]) * g:
+# con dB = 0 el planeador es neutro para CUALQUIER juego de masas.
+vbd_diam = 0.08            # [m] diámetro del pistón  -> área = pi (d/2)^2
 vbd_stroke = 0.200          # [m] carrera total        -> desplazamiento ±carrera/2
 vbd_x0 = -0.7               # [m] estación del pistón: r_p = [x0 + dx, 0, 0]
 vbd_rate = 0.01             # NO SE USA (la tasa es actuadores.vbd_rate_N)
@@ -75,17 +73,19 @@ vbd_tf = { num = [1.0], den = [2.0, 1.0] }           # CONFIRMAR
 # -----------------------------------------------------------------------------
 [masa_anadida]              # Mbr+Ma fcn: M_A = [MA, CA; CA', IA], orden [u v w p q r]
 # -----------------------------------------------------------------------------
-# Tus valores de Simulink con simetría babor-estribor: se conservan los
-# acoplamientos u-w (0.1) y p-r (0.01); u-v, v-w, p-q, q-r en cero.
-# La matriz debe ser simétrica (MA = MA').
+# Diagonal de tus valores de Simulink. Los acoplamientos fuera de la
+# diagonal (0.1 en MA, 0.01 en IA) se pusieron en 0 (autor, 2026-10-24).
+# La matriz debe ser simétrica (MA = MA'). Por simetría babor-estribor,
+# los únicos acoplamientos que podrían no ser cero son u-w, u-q, w-q, p-r,
+# v-p, v-r.
 MA = [
   # u        v       w        p      q       r
-  [3.9112,   0.0,    0.1,     0.0,   0.0,    0.0  ],   # u
+  [3.9112,   0.0,    0.0,     0.0,   0.0,    0.0  ],   # u
   [0.0,      58.17,  0.0,     0.0,   0.0,    0.0  ],   # v
-  [0.1,      0.0,    48.433,  0.0,   0.0,    0.0  ],   # w
-  [0.0,      0.0,    0.0,     0.5,   0.0,    0.01 ],   # p
+  [0.0,      0.0,    48.433,  0.0,   0.0,    0.0  ],   # w
+  [0.0,      0.0,    0.0,     0.5,   0.0,    0.0  ],   # p
   [0.0,      0.0,    0.0,     0.0,   15.83,  0.0  ],   # q
-  [0.0,      0.0,    0.0,     0.01,  0.0,    15.83],   # r
+  [0.0,      0.0,    0.0,     0.0,   0.0,    15.83],   # r
 ]
 # Solo para los bloques C_A (use_ca_omega / use_ca_translational). No viene
 # de Simulink (tu Simulink anula C_A).
@@ -154,8 +154,9 @@ gps_gate_depth = 0.7        # [m] hay fix solo si z < esto
 # -----------------------------------------------------------------------------
 disturb_xg = 0.0            # [m] desplazamiento del CG en x (solo r_g: C_RB y
 disturb_yg = 0.0            # [m]   restauración, no M; replicate_disturb_wiring)
-disturb_xlin = 0.0          # [m] posición de la masa móvil (fcn_r_lin: distxlin);
-#                             entra en r_lin, así que afecta M, I_b y r_g
+disturb_xlin = 0.0          # [m] error en el cero virtual de la masa móvil:
+#                             rc no queda donde el control cree (fcn_r_lin:
+#                             distxlin). Entra en r_lin -> M, I_b, r_g, restauración
 current_n = [0.0, 0.0, 0.0] # [m/s] corriente en NED (norte, este, abajo)
 
 
