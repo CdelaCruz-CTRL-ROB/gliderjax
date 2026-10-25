@@ -3,8 +3,9 @@
 Creado el 2026-10-24. **Pendiente**, para trabajarlo en otra sesión.
 
 > **Actualización (mismo día):** el autor pasó su ley de roll completa. La
-> pregunta 1 quedó resuelta y la parte de PID no lineal con compensación de
-> gravedad ya está implementada. Ver la sección 8. Las secciones 1 a 5
+> pregunta 1 quedó resuelta **en la implementación**; en el diseño falta
+> revisar el signo del término de y_g del modelo de roll. La parte de PID
+> no lineal con compensación de gravedad ya está implementada. Ver la sección 8. Las secciones 1 a 5
 > describen el estado anterior (PID simplificado de Simulink), y se dejan
 > como contexto.
 
@@ -162,9 +163,11 @@ return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 
 ## 6. Preguntas para la sesión de diseño
 
-1. ~~¿Cuál es la entrada de roll en el diseño del autor?~~ **Resuelta**
-   (sección 8): el y_g de la ley es el desplazamiento hacia babor,
-   u = −y_g del marco del cuerpo. El diseño es consistente.
+1. ¿Cuál es la entrada de roll en el diseño del autor? **Resuelta en la
+   implementación** (sección 8): la salida de la ley se aplica como
+   u = −y_g. **En el diseño queda revisar** el signo del término de y_g
+   del modelo de roll (sección 8, "¿Entonces el diseño tiene un error de
+   signo?").
 2. ~~¿Se agrega a roll la compensación de gravedad?~~ **Sí**, es parte de
    la ley del autor; ya está implementada (sección 8).
 3. Factor cos θ en el momento de roll: con θ = ±25° la ganancia efectiva
@@ -234,6 +237,37 @@ Simulink lleva signo − porque allí y_g es el de estribor.
 Prueba: tomar la u de la ley como y_g de estribor (sin γ con signo −)
 diverge (roll −85°, γ en +90°). La compensación de gravedad, en lugar de
 cancelarse, se duplica.
+
+Ejemplo con números (φ = 15°, z_g = 6.93 mm): para sostener el roll el CG
+debe estar 1.86 mm a estribor. La ley da −1.86 mm. Aplicado como
+u = −y_g: y_g = +1.86 mm, la masa va a estribor (γ ≈ −17°; la simulación
+da −17.3°). Correcto.
+
+### ¿Entonces el diseño tiene un error de signo?
+
+El eje y_b sigue a estribor; no se cambió nada del marco. Lo que se hizo
+fue **implementar** la salida de la ley como u = −y_g. En el simulador
+eso es correcto. En el diseño hay que revisar el modelo:
+
+- La ley (e = φ − φ_d, ganancias positivas) estabiliza el modelo
+  `m_φ·φ̈ + d_φ·φ̇ + W·z_g·sin φ + W·y_g·cos φ = …`  (y_g con **+**).
+- El modelo real, con y_g sobre y_b (Fossen,
+  g₄ = −y_g·W·cos θ·cos φ + z_g·W·cos θ·sin φ):
+  `m_φ·φ̈ + d_φ·φ̇ + W·cos θ·(z_g·sin φ − y_g·cos φ) = …`  (y_g con **−**).
+
+Solo cambia el signo del término de y_g; el amortiguamiento y la gravedad
+coinciden. Posible origen: en pitch, g₅ = z_g·W·sin θ + x_g·W·cos θ·cos φ
+lleva **+x_g**, mientras que g₄ lleva **−y_g**. Si el modelo de roll se
+escribió por analogía con pitch, el signo de y_g se invierte.
+
+Opciones para el documento de diseño:
+
+1. Definir la entrada como u = −y_g (CG hacia babor) y decirlo. El modelo
+   y la ley quedan como están, y la prueba de estabilidad vale tal cual
+   para la planta real con entrada u. Es lo que está implementado.
+2. Corregir el signo del término en el modelo (−W·y_g·cos φ) y despejar
+   de nuevo: la ley queda y_g = −(1/cos φ)·[…]. Es la misma
+   implementación.
 
 ### Resultados con las ganancias de Simulink (KP 0.008, KD 0, KI 0.01, I_MAX 4 mm)
 

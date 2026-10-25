@@ -45,8 +45,10 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       sin él).
 - [ ] DONE con flotabilidad positiva (confirmar contra V2).
 - [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
-- [x] Diseño de roll: signo del error y variable de control. Resuelto con
-      la ley del autor: su y_g es u = −y_g (entrada 14).
+- [ ] Diseño de roll: resuelto en la implementación (la salida de la ley
+      se aplica como u = −y_g, entrada 14). Falta revisar en el diseño el
+      signo del término de y_g del modelo de roll (Fossen g₄ lleva −y_g;
+      ver [DISENO_ROLL.md](DISENO_ROLL.md), sección 8).
 - [ ] Roll: términos −(d_φ/W)·φ̇, −(m_φ/W)·φ̈_d y Σ_ψ de la ley; sintonizar
       con la compensación de gravedad (ver [DISENO_ROLL.md](DISENO_ROLL.md),
       sección 8).
@@ -76,9 +78,10 @@ gravedad.
   Ganancias de Simulink por ahora (0.008, 0, 0.01; tope 4 mm).
 - **El y_g de la ley es hacia babor** (u = −y_g del cuerpo). Lo decide el
   término −z_g·sin φ: sostener φ > 0 necesita el CG a estribor, y la ley
-  da −z_g·tan φ. Con esa lectura el diseño es consistente y resuelve el
-  pendiente de [DISENO_ROLL.md](DISENO_ROLL.md). Tomarlo como y_g de
-  estribor diverge (−85°).
+  da −z_g·tan φ. Así funciona en el simulador. Tomarlo como y_g de
+  estribor diverge (−85°). En el diseño queda revisar el signo del término
+  de y_g del modelo de roll (en Fossen g₄ lleva −y_g); ver
+  [DISENO_ROLL.md](DISENO_ROLL.md), sección 8.
 - `nominal_mass(params)`: m_tot y z_g0 de las masas conocidas, compartido
   por pitch y roll. Pitch queda igual (diferencia 0.0).
 - Resultados con las ganancias de Simulink (escalón 15°): pico 35.6°
