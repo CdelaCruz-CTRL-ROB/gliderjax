@@ -121,7 +121,7 @@ reproducir la misma estructura (venv en `sim/`, proyecto en
 ```
 python -m venv sim
 cd sim
-git clone https://github.com/USUARIO/REPOSITORIO.git gliderjax
+git clone https://github.com/CdelaCruz-CTRL-ROB/gliderjax gliderjax
 cd gliderjax
 ..\Scripts\python.exe -m pip install -r requirements.txt
 ..\Scripts\python.exe escenarios\03_mision.py
