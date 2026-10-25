@@ -58,11 +58,7 @@ tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
    del autor, 2026-10-24: no replicar el error. Sección 2.2.
 2. **Masa añadida**: solo la diagonal; tus acoplamientos de 0.1 y 0.01
    van en 0. Sección 2.2.
-3. **Flotabilidad neutra**: igual al peso total, calculado con las masas
-   del archivo de configuración; tu Simulink la tiene fija en 58·g. Así el
-   planeador es neutro con dB = 0 para cualquier juego de masas. Sección
-   2.4.
-4. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
+3. **p_ref de `fcn_VBD_actuator`** (pitch automático según el signo de dB):
    no se porta. El pitch de cada inmersión lo da la misión. Sección 2.4.
 
 Falta verificar: el bloque que arma el vector de restauración (el port
@@ -194,8 +190,8 @@ Referencia: [referencia_simulink/fcn_VBD_actuator.m](referencia_simulink/fcn_VBD
 
 | Parte | Simulink | Port (`vbd_outputs`, `dxv_from_dB_ref`) | ¿Igual? |
 |---|---|---|---|
-| ρ, g | 1000, 9.81 | `RHO`, `G0` | sí |
-| B_neutral | `W_total = 58*9.81` (constante) | peso total: (m_static + m_lin + m_rot + m_pist)·g | igual con las masas actuales; **a propósito** sigue a las masas, ver abajo |
+| ρ, g | 1000, 9.81 | `rho` (archivo de configuración), `G0` | sí |
+| B_neutral | `W_total = 58*9.81` (constante) | `rho·g·V_displaced`, `V_displaced = 0.058 m³` | sí; independiente de las masas, ver abajo |
 | Área | `pi*(0.08/2)^2` | `pi*(vbd_diam/2)^2` | sí (antes `3.14159265*0.04^2`, diferencia relativa 1e-9) |
 | Δx pedido y saturación | `−(dB/(ρg))/área`, ±carrera/2 | igual | sí |
 | r_p | `[x0 + Δx, 0, 0]`, x0 = −0.7 | igual | sí |
@@ -204,11 +200,22 @@ Referencia: [referencia_simulink/fcn_VBD_actuator.m](referencia_simulink/fcn_VBD
 | `percent_fill`, `delta_V_actual` | salidas de monitoreo | no se calculan | no afecta la dinámica |
 | `p_ref` | ±`con` según el signo de dB | **no se porta** | a propósito, ver abajo |
 
-**Flotabilidad neutra.** El port la calcula con las masas del archivo de
-configuración, no fija en 58·g. **Decisión (autor, 2026-10-24):** se van a
-hacer experimentos cambiando parámetros, y el planeador debe seguir siendo
-neutro con dB = 0. Verificado: con m_lin = 18, m_static = 40, o m_rot = 7
-y m_pist = 1.5, B − W = 0 con dB = 0.
+**Flotabilidad neutra: separada de las masas.** `B_neutral = ρ·g·V_displaced`,
+con ρ y V_displaced en `[flotabilidad]` del archivo de configuración.
+**Decisión (autor, 2026-10-24),** después de probar las dos opciones:
+
+- Si la flotabilidad siguiera a las masas, el planeador sería neutro
+  siempre y se perdería un efecto real: cambiar una masa (o la densidad
+  del agua) lo saca de neutro.
+- Para que sea neutro se ajusta a mano `V_displaced`.
+  `escenarios/00_balance_estatico.py` dice cuánto debe valer (ver
+  [SIMULACION.md](SIMULACION.md)), y `02_simulacion.py` imprime la
+  flotabilidad neta al arrancar.
+- Con los valores actuales (ρ = 1000, V = 0.058 m³) es igual que tu
+  Simulink: B − W = 0 exacto.
+- **Ojo con ρ:** los coeficientes hidrodinámicos (`[hidrodinamica]`) ya
+  traen la densidad del CFD y no se escalan al cambiar `rho`; solo cambian
+  la flotabilidad y la conversión N ↔ carrera del pistón.
 
 **p_ref (pitch automático según el signo de dB).** Tu bloque daba un pitch
 de referencia ±`con` al bajar o subir, y el control de pitch tenía un switch

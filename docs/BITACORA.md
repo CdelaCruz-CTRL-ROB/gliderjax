@@ -19,11 +19,17 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Archivo de configuración `config/cidesi.toml`.
 - [x] Superficie: `B_scale` multiplica a B, `Δx_b` se suma a x_b
       (confirmado).
-- [x] Flotabilidad neutra = peso total, sigue a las masas.
+- [x] Flotabilidad separada de las masas: `rho·g·V_displaced`
+      (decisión final del autor; neutralidad a mano).
+- [x] Script de balance estático y cero virtual (`00_balance_estatico.py`).
+- [x] Script de simulación manual con solver, condiciones iniciales y
+      comparación con la corrida anterior (`02_simulacion.py`).
 - [ ] `disturb_xg`/`disturb_yg`: el autor lo está pensando (hoy entran en
       r_g después de armar M, como en Simulink).
 - [ ] Barridos de parámetros: correr varias variantes y superponerlas
-      ("mover todo y ver qué da").
+      ("mover todo y ver qué da"). Puede salir de `02_simulacion.py`.
+- [ ] ¿Escalar los coeficientes hidrodinámicos con ρ/ρ_CFD al cambiar
+      `rho`? Hoy no se escalan.
 - [ ] Verificar el bloque que arma el vector de restauración.
 - [ ] Confirmar `BUOY_SIGN` y los demás valores marcados CONFIRMAR
       (cadenas de actuadores en `[actuadores]`).
@@ -35,10 +41,62 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
 - [ ] Reemplazar controladores provisionales por los bloques de Simulink
       (`Pitch_control`, `Yaw_control`, `Roll control`).
-- [ ] Script de misión por waypoints (`escenarios/02_...`).
+- [ ] Script de misión por waypoints (`escenarios/03_...`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (6) — ρ y volumen desplazado; balance estático; simulación manual
+
+### Flotabilidad separada de las masas (decisión final del autor)
+
+Después de la entrada (5), el autor reconsideró: es más riguroso que la
+flotabilidad no siga a las masas, para no perder el efecto de quedar fuera
+de neutro; la neutralidad se ajusta a mano.
+
+- `[flotabilidad]` nueva en el archivo de configuración: `rho = 1000`,
+  `V_displaced = 0.058 m³`. `B_neutral = rho·g·V_displaced`.
+- `RHO` deja de ser constante en el código: todo usa `p.rho`.
+- Con los valores actuales B − W = 0 exacto; la prueba de validación da
+  lo mismo que antes (diferencia 6e-14 m, redondeo).
+
+### `sim.py`
+
+- Solvers de paso fijo con nombres de Simulink: `ode1` (Euler), `ode2`
+  (Heun), `ode4` (RK4, default). `make_simulator(..., solver="ode4")`.
+- `actuator_steady_state(p, rc, gamma, dB)`: estados de los actuadores ya
+  asentados, para arrancar con los actuadores en posición. Verificado: rc,
+  γ y la flotabilidad neta quedan constantes desde t = 0.
+- `build_initial_state(...)`: posición y actitud en el inercial,
+  velocidad en el cuerpo o en el inercial (se convierte), velocidad
+  angular, actuadores. Verificado: NED → cuerpo → NED regresa igual.
+
+### `escenarios/00_balance_estatico.py`
+
+Masas, flotabilidad neta, V_displaced para neutralidad, CG/CB/BG, cero
+virtual de la masa móvil (pitch 0 en reposo), γ para roll 0, equilibrio en
+reposo y curvas. Resultados en [SIMULACION.md](SIMULACION.md), sección 1:
+cero virtual calculado 0.28611 m (archivo: 0.2861), BG = 6.9 mm,
+sensibilidad ~1°/mm.
+
+### `escenarios/02_simulacion.py`
+
+Simulación por tiempo para probar a mano: solver, paso (0.005 s), duración,
+condiciones iniciales, tabla de actuadores. Guarda la corrida, mueve la
+anterior a `anterior/`, imprime qué cambió (entradas, parámetros y
+switches) y superpone las dos. Probado con tres corridas seguidas (cambio
+de rc; cambio a perfil `completo` con velocidad inicial en el inercial).
+Detalle en [SIMULACION.md](SIMULACION.md), sección 2.
+
+### Experimento: paso de integración
+
+| Comparación (pitch, prueba de validación) | Máxima | Estacionario |
+|---|---|---|
+| dt 0.05 vs 0.005 | 0.54° en t = 608 s (cambio bajada → subida) | 0 |
+| dt 0.005 vs 0.0025 | 0.03° | 0 |
+| ode1 / ode2 / ode4 con dt 0.005 | < 0.002° entre ellos | |
 
 ---
 

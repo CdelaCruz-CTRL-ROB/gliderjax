@@ -11,6 +11,7 @@ hay en el modelo, de dónde viene cada parte y dónde se cambia cada cosa**.
 
 | Archivo | Contenido |
 |---|---|
+| [SIMULACION.md](SIMULACION.md) | Balance estático (cero virtual, neutralidad) y simulación manual: solver, condiciones iniciales, comparación con la corrida anterior |
 | [VALIDACION.md](VALIDACION.md) | Script de validación en lazo abierto: cómo usarlo, qué muestra cada figura, cómo comparar con Simulink, señales disponibles |
 | [MODELO.md](MODELO.md) | Inventario del modelo físico: qué viene de Simulink y qué se agregó, comparación con tu código, saturación, crossflow, superficie, inversión del giro |
 | [CONTROL_Y_MISION.md](CONTROL_Y_MISION.md) | Controladores actuales (provisionales), FSM de waypoints estado por estado, problemas conocidos |
@@ -30,13 +31,15 @@ GLIDER_JAX/sim/                       venv de Python (Lib/, Scripts/) -- NO reno
     gliderjax/                        la librería: física, simulador, control, navegación, gráficas
       params.py                         estructura de parámetros y switches; lee config/*.toml
       dynamics.py                       ecuaciones de movimiento e hidrodinámica
-      sim.py                            integrador RK4, actuadores, simulador
+      sim.py                            solvers (ode1, ode2, ode4), actuadores, simulador
       autopilot.py                      controladores de actitud (PROVISIONALES)
       navigation.py                     FSM de waypoints (V2) y GPS
       geodesy.py                        conversiones lat/lon <-> ECEF <-> NED
       scope.py                          gráficas tipo "scope" de Simulink
     escenarios/                       SCRIPTS DE TRABAJO, uno por caso de uso
-      01_validacion_dinamica.py         lazo abierto, modelo = Simulink
+      00_balance_estatico.py            sin simular: masas, flotabilidad, CG, cero virtual
+      01_validacion_dinamica.py         prueba fija en lazo abierto, modelo = Simulink
+      02_simulacion.py                  simulación manual: cambias, corres, comparas
     out/                              resultados (figuras, telemetría); no va a git
     run_test.py                       script de prueba de v1 (se conserva)
     demos/                            ejemplos de v1 (lazo abierto, lazo cerrado, misión, Monte Carlo)
@@ -55,11 +58,11 @@ gráficas) y llaman a la simulación.
 |---|---|
 | masas, inercias, masa añadida, coeficientes hidrodinámicos, amortiguamiento | `config/cidesi.toml` |
 | actuadores (FT, limitadores de tasa, saturaciones) | `config/cidesi.toml`, `[actuadores]` y `[masas]` |
-| VBD (diámetro, carrera, estación del pistón) | `config/cidesi.toml`, `[vbd]` (la flotabilidad neutra = peso total, sigue a las masas) |
+| volumen desplazado (neutralidad) y densidad del agua | `config/cidesi.toml`, `[flotabilidad]` (no sigue a las masas: revisar con `00_balance_estatico.py`) |
+| VBD (diámetro, carrera, estación del pistón) | `config/cidesi.toml`, `[vbd]` |
 | perturbaciones (CG, masa móvil) y corriente | `config/cidesi.toml`, `[perturbaciones]` |
 | qué partes del modelo se usan (switches) | `config/cidesi.toml`, `[modelo.simulink]` / `[modelo.completo]` |
-| qué perfil usa una prueba, paso de integración | el script, sección 1 (`MODELO`, `DT`) |
-| comandos, duración, condiciones iniciales | el script, secciones 2 y 3 |
+| perfil, solver, paso, duración, condiciones iniciales, actuadores | el script (`02_simulacion.py`, secciones 1 a 4) |
 | ganancias de los controladores (provisionales) | `gliderjax/autopilot.py`, líneas 32-37 |
 | constantes de la FSM de waypoints | `gliderjax/navigation.py`, líneas 20-36 |
 | ecuaciones del modelo | `gliderjax/dynamics.py` (mapa en [MODELO.md](MODELO.md)) |
@@ -72,7 +75,9 @@ clave (por ejemplo un error de dedo), da error con el nombre.
 Desde `GLIDER_JAX\sim\gliderjax`:
 
 ```
+..\Scripts\python.exe escenarios\00_balance_estatico.py
 ..\Scripts\python.exe escenarios\01_validacion_dinamica.py
+..\Scripts\python.exe escenarios\02_simulacion.py
 ..\Scripts\python.exe demos\demo_mission.py
 ```
 

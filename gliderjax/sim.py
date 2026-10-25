@@ -3,10 +3,11 @@
 Structure (the Simulink-equivalent architecture):
 
   outer lax.scan over FRAMES  (one telemetry emission per frame)
-      inner lax.fori_loop over `decimate` RK4 steps
+      inner lax.fori_loop over `decimate` solver steps
           - controller runs every `ctrl_every` inner steps (discrete rate!)
           - actuators move toward commands with RATE + TRAVEL limits
-          - continuous state integrated with fixed-step RK4
+          - continuous state integrated with a fixed-step solver
+            (SOLVERS: "ode1" Euler, "ode2" Heun, "ode4" RK4 = Simulink names)
 
 The controller is a pure function:
     cmds, ctrl_state = controller(t, x, ctrl_state, params)
@@ -32,6 +33,21 @@ def rk4_step(x, dt, p, cfg):
     k3 = f(x + 0.5 * dt * k2)
     k4 = f(x + dt * k3)
     return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+def euler_step(x, dt, p, cfg):
+    return x + dt * dynamics(x, p, cfg)[0]
+
+
+def heun_step(x, dt, p, cfg):
+    f = lambda y: dynamics(y, p, cfg)[0]
+    k1 = f(x)
+    k2 = f(x + dt * k1)
+    return x + (dt / 2.0) * (k1 + k2)
+
+
+# fixed-step solvers, named as in Simulink
+SOLVERS = {"ode1": euler_step, "ode2": heun_step, "ode4": rk4_step}
 
 
 def _rl(prev, u, rate, dt):
@@ -117,11 +133,16 @@ def make_ref_pipeline(dt,
 
 
 def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
-                   dt: float = 0.05, decimate: int = 20, ctrl_every: int = 10):
+                   dt: float = 0.05, decimate: int = 20, ctrl_every: int = 10,
+                   solver: str = "ode4"):
     """Build a JIT-compiled simulate(params, x0, n_frames) -> telemetry dict.
 
     Telemetry arrays have leading axis n_frames (time = tel["t"]).
+    solver: key of SOLVERS ("ode1", "ode2", "ode4").
     """
+    if solver not in SOLVERS:
+        raise ValueError(f"solver '{solver}' unknown; use one of {list(SOLVERS)}")
+    step = SOLVERS[solver]
 
     def inner_step(i, carry, p):
         x, cs, cmds, t = carry
@@ -131,7 +152,7 @@ def make_simulator(controller: Callable, ctrl_state0: Any, cfg: ModelConfig,
         cs = jax.tree_util.tree_map(
             lambda a, b: jnp.where(run_ctrl, a, b), new_cs, cs)
         x = move_actuators(x, cmds, dt, p)
-        x = rk4_step(x, dt, p, cfg)
+        x = step(x, dt, p, cfg)
         return (x, cs, cmds, t + dt)
 
     def frame(carry, _, p):
@@ -167,6 +188,55 @@ def make_batch_simulator(simulate):
     """
     return jax.jit(jax.vmap(simulate, in_axes=(0, 0, None)),
                    static_argnums=(2,))
+
+
+def actuator_steady_state(p: GliderParams, rc, gamma, dB):
+    """Actuator states x[12:23] already settled at constant commands
+    [rc [m], gamma [rad], dB [N]] (same saturations as move_actuators), so a
+    simulation can start with the actuators in place instead of at neutral."""
+    def ss(A, B, u):                       # discrete steady state (I-A) x = B u
+        return jnp.linalg.solve(jnp.eye(A.shape[0]) - A, B * u)
+    m_rl = jnp.clip(rc, -p.dx_lin_max, p.dx_lin_max)
+    g_pre = p.rotpre_b * gamma / (1.0 - p.rotpre_a)
+    g_rl = p.rotpre_c * g_pre
+    g_sat = jnp.clip(g_rl, -p.gamma_max, p.gamma_max)
+    v_pre = p.vbdpre_b * dB / (1.0 - p.vbdpre_a)
+    v_rl = p.vbdpre_c * v_pre
+    return jnp.concatenate([
+        jnp.array([m_rl]), ss(p.mass_A, p.mass_B, m_rl),
+        jnp.array([g_pre, g_rl]), ss(p.rot_A, p.rot_B, g_sat),
+        jnp.array([v_pre, v_rl]), ss(p.vbd_A, p.vbd_B, v_rl)])
+
+
+def build_initial_state(p: GliderParams, pos_ned=(0.0, 0.0, 0.0),
+                        euler=(0.0, 0.0, 0.0), vel=(0.0, 0.0, 0.0),
+                        vel_frame="body", omega=(0.0, 0.0, 0.0),
+                        actuators=None, ecef0=None):
+    """Full initial state (26,).
+    pos_ned [m] NED position; euler [rad] (roll, pitch, yaw);
+    vel [m/s]: vel_frame="body" -> (u, v, w) relative to the water (the
+        state), vel_frame="ned" -> (vN, vE, vD) over ground (the current
+        p.current_n is subtracted);
+    omega [rad/s] (p, q, r) body rates;
+    actuators: None = neutral, or (rc [m], gamma [rad], dB [N]) already
+        settled (see actuator_steady_state)."""
+    from .dynamics import R_body_to_ned
+    x0 = jnp.zeros(26)
+    eul = jnp.asarray(euler, dtype=float)
+    vel = jnp.asarray(vel, dtype=float)
+    if vel_frame == "ned":
+        Rnb = R_body_to_ned(eul[0], eul[1], eul[2]).T
+        vel = Rnb @ (vel - p.current_n)
+    elif vel_frame != "body":
+        raise ValueError("vel_frame must be 'body' or 'ned'")
+    x0 = (x0.at[0:3].set(jnp.asarray(pos_ned, dtype=float))
+            .at[3:6].set(eul).at[6:9].set(vel)
+            .at[9:12].set(jnp.asarray(omega, dtype=float)))
+    if actuators is not None:
+        x0 = x0.at[12:23].set(actuator_steady_state(p, *actuators))
+    if ecef0 is not None:
+        x0 = x0.at[23:26].set(jnp.asarray(ecef0))
+    return x0
 
 
 def initial_state(depth=0.0, pitch=0.0, u=0.0, roll=0.0, ecef0=None):
