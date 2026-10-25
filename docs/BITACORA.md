@@ -85,6 +85,50 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 
 ---
 
+## 2026-10-25 (21) — Trayectorias para comentar/descomentar; mapa con tu formato
+
+Pedido del autor:
+- trayectorias que se eligen comentando y descomentando, como su lista de
+  Simulink;
+- en el mapa, el punto de inflexión de cada inmersión, con la profundidad
+  que alcanzó;
+- flechas de corriente con la simbología de su figura
+  (`referencia_simulink/figura_waypoints.png`), en una sola corrida, sin comparar con y
+  sin estimador.
+
+Cambios en `escenarios/03_mision.py`:
+- `WAYPOINTS` trae las trayectorias de su lista como bloques:
+  - triángulo (activo);
+  - cuadro de 7 puntos;
+  - un punto al norte;
+  - cuadro de 3 km;
+  - barrido.
+
+  El origen siempre es la primera fila.
+- Numeración como en su lista: el origen es **WP0**. En consola y figuras
+  los objetivos son WP1, WP2, … La FSM sigue numerando desde 1 por dentro.
+  "Alcanzados" ya no cuenta el origen.
+- `10_mapa.png` con su formato:
+  - Norte X horizontal, Este Y vertical, letra con serifas;
+  - línea roja = trayectoria;
+  - flechas azul claro = corriente uniforme del TOML;
+  - X roja con círculo punteado = target;
+  - ▼ = inflexión, con su profundidad;
+  - ▲ cian = superficie;
+  - ★ verde = inicio.
+
+  La leyenda va fuera del área de la gráfica, y los waypoints repetidos
+  llevan una sola etiqueta ("WP2, WP6").
+- `check_mission`: el error da el WP (origen = WP0) y la fila.
+
+Prueba con corriente (solo en la prueba; el TOML sigue sin corriente):
+cuadro de 7 puntos con N −0.05, E +0.08 m/s. Completa 6/6, DONE en
+t = 7685 s, 8 inmersiones, de las cuales dos son cortas, de 29 y 46 m, para
+entrar al radio del WP3 y del WP6. Sin corriente, el triángulo da lo mismo
+que antes (DONE en t = 1957 s).
+
+---
+
 ## 2026-10-25 (20) — Script de misión: `escenarios/03_mision.py`
 
 Guía en [MISION.md](MISION.md). Mismo estilo que `02_simulacion.py`:

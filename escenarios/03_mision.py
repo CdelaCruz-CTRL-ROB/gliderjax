@@ -63,12 +63,38 @@ T_FINAL = 3000.0      # [s] duración del modo "tiempo"
 #   (lat, lon); si se invierten, en el Golfo "lat = -95" y el script avisa.
 #   pitch [deg], opcional: el de las inmersiones HACIA ese waypoint (bajada
 #   < 0, subida > 0); sin él, el de la FSM (-35 / +35).
-#   El WP1 es el origen del marco NED; el planeador arranca ahí.
+#   La primera fila es SIEMPRE el origen (WP0): origen del marco NED y
+#   punto de arranque. Las trayectorias se eligen comentando / descomentando.
 WAYPOINTS = [
     # lon [deg]     lat [deg]    pitch bajada  pitch subida [deg]
-    (-95.72275,    19.37214),                 # WP1 = origen
-    (-95.72011,    19.37464),
-    (-95.72275,    19.37714),
+    # --- origen: SIEMPRE la primera fila ---
+    (-95.72275,    19.37214),     # WP0: origen (19°22'19.7"N, 95°43'21.9"W)
+
+    # --- triángulo (el de Simulink) ---
+    (-95.72011,    19.37464),     # WP1 (19°22'28.7"N, 95°43'12.4"W)
+    (-95.72275,    19.37714),     # WP2 (19°22'37.7"N, 95°43'21.9"W)
+    # --- ... y para el cuadro de 7 puntos, además: ---
+    # (-95.71798,    19.37714),   # WP3 (~500 m al este del WP2)
+    # (-95.71798,    19.37264),   # WP4 (~500 m al sur del WP3)
+    # (-95.72275,    19.37264),   # WP5 (~500 m al oeste del WP4)
+    # (-95.72275,    19.37714),   # WP6 (~500 m al norte del WP5)
+
+    # --- un solo punto al norte ---
+    # (-95.72275,    19.37885),
+
+    # --- cuadro de 3 km ---
+    # (-95.72275,    19.40014),   # WP A: 3 km al norte del origen
+    # (-95.69412,    19.40014),   # WP B: 3 km al este del WP A
+    # (-95.69412,    19.37214),   # WP C: 3 km al sur del WP B
+    # (-95.70844,    19.38614),   # WP D: centro del cuadro (fin)
+
+    # --- barrido (lawnmower) ---
+    # (-95.72275,    19.39014),   # WP A: 2 km al norte
+    # (-95.71321,    19.39014),   # WP B: 1 km al este
+    # (-95.71321,    19.37214),   # WP C: 2 km al sur
+    # (-95.70367,    19.37214),   # WP D: 1 km al este
+    # (-95.70367,    19.39014),   # WP E: 2 km al norte
+    # (-95.69412,    19.39014),   # WP F: 1 km al este (fin)
 ]
 FSM = "simulink"            # máquina de estados (gliderjax/fsm/)
 MODELO_INMERSION = "recta"  # gliderjax/fsm/dive_models.py
@@ -147,6 +173,8 @@ try:
 except (ValueError, TypeError) as e:
     sys.exit(f"misión / FSM_AJUSTES: {e}")
 n_wp = len(nav.waypoints_ned)
+n_obj = n_wp - 1          # waypoints objetivo (sin el origen, WP0)
+# la FSM numera desde 1 (WP0 = índice 1); aquí se muestra como en tu lista
 
 p, cfg = load_config(CONFIG, MODELO, dt=DT)
 geo_forzada = not cfg.use_geodesy
@@ -180,7 +208,7 @@ for i, (w, ne) in enumerate(zip(filas, nav.waypoints_ned)):
         pt = (f"{np.rad2deg(cfg_fsm.pitch_down_rad):+.1f} / "
               f"{np.rad2deg(cfg_fsm.pitch_up_rad):+.1f} (FSM)"
               if hasattr(cfg_fsm, "pitch_down_rad") else "(FSM)")
-    print(f"{i + 1:<3d} {w[0]:10.5f} {w[1]:10.5f} {ne[0]:8.1f} {ne[1]:8.1f} "
+    print(f"{i:<3d} {w[0]:10.5f} {w[1]:10.5f} {ne[0]:8.1f} {ne[1]:8.1f} "
           f"{tramo:>10s}  {pt}")
 
 # ---- simular por bloques ----------------------------------------------------
@@ -206,7 +234,7 @@ while True:
     hay_nan = bool(np.isnan(tb["eta"]).any())
     k = int(sb["current_wp_index"][-1])
     print(f"  t = {tb['t'][-1]:7.0f} s   {nav.state_names[int(sb['glider_state'][-1]) - 1]:12s} "
-          + (f"hacia WP{k}/{n_wp}" if k <= n_wp else "waypoints terminados")
+          + (f"hacia WP{k - 1}/{n_obj}" if k <= n_wp else "waypoints terminados")
           + f"   z = {tb['eta'][-1, 2]:6.1f} m   ({time.time() - t_ini:.0f} s)")
     if tb["t"][-1] >= t_fin - 1e-6 or hay_nan:
         break
@@ -215,7 +243,7 @@ keep = tel["t"] <= t_fin + 1e-6
 tel = {k: v[keep] for k, v in tel.items()}
 t = tel["t"]
 sig = waypoint_signals(tel, nav)
-alcanzados = int(min(sig["current_wp_index"].max() - 1, n_wp))
+alcanzados = int(np.clip(sig["current_wp_index"].max() - 2, 0, n_obj))
 
 # ---- resultado --------------------------------------------------------------
 if hay_nan:
@@ -223,15 +251,15 @@ if hay_nan:
     msg = f"ATENCIÓN: NaN desde t = {t[np.argmax(np.isnan(tel['eta']).any(axis=1))]:.0f} s"
 elif t_done is not None:
     resultado = "completa"
-    msg = f"MISIÓN COMPLETA: DONE en t = {t_done:.0f} s ({alcanzados}/{n_wp} waypoints)"
+    msg = f"MISIÓN COMPLETA: DONE en t = {t_done:.0f} s ({alcanzados}/{n_obj} waypoints)"
 elif DURACION == "mision":
     resultado = "timeout"
     msg = (f"TIMEOUT: la misión no terminó en T_MAX = {T_MAX:.0f} s; "
-           f"llegó a {alcanzados} de {n_wp} waypoints")
+           f"llegó a {alcanzados} de {n_obj} waypoints")
 else:
     resultado = "tiempo"
     msg = (f"tiempo cumplido (T_FINAL = {T_FINAL:.0f} s) sin terminar: "
-           f"llegó a {alcanzados} de {n_wp} waypoints")
+           f"llegó a {alcanzados} de {n_obj} waypoints")
 print(f"\n{msg}")
 print(f"simulación: {t[-1]:.0f} s en {time.time() - t_ini:.1f} s (incluye compilación)")
 
@@ -248,7 +276,7 @@ with open(os.path.join(OUT, "entradas.json"), "w", encoding="utf-8") as f:
 shutil.copy(CONFIG, os.path.join(OUT, "config_usada.toml"))
 with open(os.path.join(OUT, "resultado.json"), "w", encoding="utf-8") as f:
     json.dump(dict(resultado=resultado, mensaje=msg, t_done=t_done,
-                   waypoints_alcanzados=alcanzados, waypoints=n_wp,
+                   waypoints_alcanzados=alcanzados, waypoints=n_obj,
                    t_simulado=float(t[-1])), f, indent=1, ensure_ascii=False)
 
 # ---- qué cambió respecto a la corrida anterior ------------------------------
@@ -274,15 +302,17 @@ if os.path.exists(os.path.join(ANT, "entradas.json")):
 eta, st = tel["eta"], sig["glider_state"]
 entra = lambda s: np.flatnonzero((st[1:] == s) & (st[:-1] != s)) + 1
 i_sub, i_sal = entra(2), entra(7)          # SUBMERGE, SURFACE_WAIT
+i_inf = []                                 # punto de inflexión (el más hondo) de cada una
 print("\ninmersión  inicio [s]  hacia  rumbo plan  prof plan  prof máx  duración  "
       "al salir: dist al WP")
 for j, i0 in enumerate(i_sub):
     i1 = next((i for i in i_sal if i > i0), len(t) - 1)
+    i_inf.append(i0 + int(np.argmax(eta[i0:i1 + 1, 2])))
     k = int(sig["current_wp_index"][i0])
     d_wp = np.hypot(*(eta[i1, 0:2] - nav.waypoints_ned[min(k, n_wp) - 1]))
-    print(f"{j + 1:6d}  {t[i0]:12.0f}  WP{k:<3d} "
+    print(f"{j + 1:6d}  {t[i0]:12.0f}  WP{k - 1:<3d} "
           f"{np.rad2deg(sig['current_yaw_ref'][i0]):9.1f}°  "
-          f"{sig['current_dive_depth_m'][i0]:7.1f} m  {eta[i0:i1 + 1, 2].max():6.1f} m  "
+          f"{sig['current_dive_depth_m'][i0]:7.1f} m  {eta[i_inf[-1], 2]:6.1f} m  "
           f"{t[i1] - t[i0]:6.0f} s  {d_wp:10.1f} m"
           + ("" if i1 in i_sal else "  (no salió)"))
 
@@ -306,31 +336,75 @@ radio = getattr(nav.config, "acceptance_radius_m", None)
 
 def terminar(f, nombre):
     f.tight_layout()
-    f.savefig(fig(nombre), dpi=120)
+    f.savefig(fig(nombre), dpi=120, bbox_inches="tight")
     if not MOSTRAR:
         plt.close(f)
 
 
 def figura_mapa():
-    f, ax = plt.subplots(figsize=(8, 8))
-    ax.plot(eta[:, 1], eta[:, 0], lw=1.0, label="trayectoria")
-    ax.plot(eta[0, 1], eta[0, 0], "ko", label="inicio")
-    ax.plot(eta[i_sal, 1], eta[i_sal, 0], "o", mfc="none", color="C1",
-            label="salida a superficie")
-    for i, (n_, e_) in enumerate(nav.waypoints_ned):
-        ax.plot(e_, n_, "r*", ms=12)
-        if radio:
-            ax.add_patch(plt.Circle((e_, n_), radio, fill=False, color="r",
-                                    ls="--", lw=0.8))
-        ax.annotate(f"WP{i + 1}", (e_, n_), textcoords="offset points",
-                    xytext=(8, 8))
-    ax.set_xlabel("Este [m]")
-    ax.set_ylabel("Norte [m]")
-    ax.axis("equal")
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=8)
-    ax.set_title(titulo, fontsize=9)
-    terminar(f, "10_mapa.png")
+    """Vista superior con el formato de tus figuras de Simulink: Norte X en
+    el eje horizontal, Este Y en el vertical."""
+    from matplotlib.lines import Line2D
+    X, Y = eta[:, 0], eta[:, 1]
+    wps = nav.waypoints_ned
+    r = radio or 0.0
+    xs = np.concatenate([X, wps[:, 0] - r, wps[:, 0] + r])
+    ys = np.concatenate([Y, wps[:, 1] - r, wps[:, 1] + r])
+    m = 0.06 * max(np.ptp(xs), np.ptp(ys), 100.0)
+    x0, x1, y0, y1 = xs.min() - m, xs.max() + m, ys.min() - m, ys.max() + m
+    corriente = np.asarray(p.current_n, dtype=float)[0:2]   # [N, E] del TOML
+    v_c = float(np.hypot(*corriente))
+    with plt.rc_context({"font.family": "serif", "mathtext.fontset": "cm"}):
+        f, ax = plt.subplots(figsize=(11, 8))
+        manijas = [Line2D([], [], color="red", lw=2.5, label="Trayectoria")]
+        if v_c > 0:                        # corriente uniforme: flechas en una malla
+            gx, gy = np.meshgrid(np.linspace(x0, x1, 13), np.linspace(y0, y1, 13))
+            largo = 0.05 * max(x1 - x0, y1 - y0)
+            u, v = corriente / v_c * largo
+            ax.quiver(gx, gy, np.full_like(gx, u), np.full_like(gy, v),
+                      angles="xy", scale_units="xy", scale=1, color="#5DADE2",
+                      width=0.0035, alpha=0.9, zorder=1)
+            manijas.append(Line2D([], [], color="#5DADE2", lw=2.5,
+                                  label=f"Corriente marina ({v_c:.2f} m/s)"))
+        ax.plot(X, Y, "-", color="red", lw=2.5, zorder=3)
+        nombres = {}                       # waypoints repetidos: una etiqueta
+        for i, (wn, we) in enumerate(wps[1:], start=1):   # WP0 = origen = inicio
+            nombres.setdefault((round(wn), round(we)), []).append(f"WP{i}")
+        for (wn, we), ns in nombres.items():
+            ax.plot(wn, we, "x", color="red", ms=11, mew=2.5, zorder=4)
+            if radio:
+                ax.add_patch(plt.Circle((wn, we), radio, fill=False, color="red",
+                                        ls="--", lw=1.5, zorder=4))
+            ax.annotate(", ".join(ns), (wn, we), textcoords="offset points",
+                        xytext=(10, 10), fontsize=9, color="0.3")
+        manijas += [Line2D([], [], color="red", marker="x", ms=9, mew=2.5,
+                           ls="none", label="Target"),
+                    Line2D([], [], color="red", ls="--", lw=1.5,
+                           label="Radio de aceptación")]
+        ax.plot(X[i_inf], Y[i_inf], "v", color="0.2", mec="black", ms=10, zorder=5)
+        for i in i_inf:
+            ax.annotate(f"{eta[i, 2]:.0f} m", (X[i], Y[i]), textcoords="offset points",
+                        xytext=(7, -12), fontsize=8, color="0.2", zorder=6)
+        ax.plot(X[i_sal], Y[i_sal], "^", color="cyan", mec="black", ms=10, zorder=5)
+        ax.plot(X[0], Y[0], "*", color="#22BB22", mec="black", ms=16, zorder=6)
+        manijas += [Line2D([], [], color="0.2", mec="black", marker="v", ms=9,
+                           ls="none", label="Punto de inflexión"),
+                    Line2D([], [], color="cyan", mec="black", marker="^", ms=9,
+                           ls="none", label="Punto de superficie"),
+                    Line2D([], [], color="#22BB22", mec="black", marker="*", ms=13,
+                           ls="none", label="Inicio")]
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y0, y1)
+        ax.set_aspect("equal")
+        ax.set_xlabel("Norte $X$ (m)", fontsize=13)
+        ax.set_ylabel("Este $Y$ (m)", fontsize=13)
+        ax.grid(alpha=0.3)
+        ax.legend(handles=manijas, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+                  fontsize=10, framealpha=1.0)      # afuera: no tapa nada
+        ax.set_title("Navegación por waypoints"
+                     + (" bajo corriente" if v_c > 0 else "") + f"\n{msg}",
+                     fontsize=13)
+        terminar(f, "10_mapa.png")
 
 
 def figura_perfil():
@@ -344,8 +418,8 @@ def figura_perfil():
     ax[1].set_yticks(range(1, len(nav.state_names) + 1))
     ax[1].set_yticklabels(nav.state_names, fontsize=7)
     ax[1].set_ylabel("estado FSM")
-    ax[2].step(t, np.minimum(sig["current_wp_index"], n_wp), where="post")
-    ax[2].set_yticks(range(1, n_wp + 1))
+    ax[2].step(t, np.minimum(sig["current_wp_index"], n_wp) - 1, where="post")
+    ax[2].set_yticks(range(0, n_wp))
     ax[2].set_ylabel("WP objetivo")
     ax[2].set_xlabel("t [s]")
     for a in ax:

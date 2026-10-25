@@ -74,8 +74,9 @@ def check_mission(mission_lla):
     bad = (np.abs(m[:, 1]) > 90.0) | (np.abs(m[:, 0]) > 180.0)
     if bad.any():
         i = int(np.argmax(bad))
-        raise ValueError(f"mission: WP{i + 1} = {m[i, :2].tolist()} is not "
-                         "[lon_deg, lat_deg] (|lat| <= 90). Swapped lat/lon?")
+        raise ValueError(f"mission: WP{i} (row {i + 1}; the origin is WP0) = "
+                         f"{m[i, :2].tolist()} is not [lon_deg, lat_deg] "
+                         "(|lat| <= 90). Swapped lat/lon?")
     return m[:, :3]
 
 
