@@ -14,17 +14,17 @@ Three modes, one architecture (all compatible with make_simulator):
   WAYPOINT        make_waypoint_controller(mission):
                   full V2 FSM -> reference shaping -> attitude loops
 
-THE THREE LOOPS ARE PLACEHOLDERS (working, but NOT your Simulink
-Pitch_control / Roll control / Yaw_control blocks): pitch_control,
-roll_control and yaw_control below are the functions to replace. Each one
+roll_control is the author's simplified Simulink roll PID. pitch_control
+and yaw_control are still PLACEHOLDERS (working, but NOT the Simulink
+Pitch_control / Yaw_control blocks) -- the functions to replace. Each one
 gets N_MEM numbers of memory (integrators, previous values, filter states)
 carried between calls, and the reference together with its rate
 (ref_dot, the backward difference of the reference over one controller
 period).
 
 ctrl_state layout, all scope-able via tel["ctrl_state"] (scope "ctrl_state:i"):
-  [0:4]    pitch memory    ([0] = placeholder pitch PID integrator)
-  [4:8]    roll memory
+  [0:4]    pitch memory    ([0] = pitch PID integral term)
+  [4:8]    roll memory     ([0] = roll PID integral term)
   [8:12]   yaw memory
   [12:15]  references the loops used [pitch, roll, yaw] [rad] (also the
            previous value for ref_dot)
@@ -42,11 +42,13 @@ from .navigation import build_fsm, gps_fix
 from .geodesy import ecef2lla
 
 # ---- placeholder attitude gains (tuned for the CIDESI soft-z_g vehicle) ----
-KP_P, KD_P, KI_P = 0.015, 0.08, 0.003        # pitch PID (x_g units / rad)
+KP_P, KD_P, KI_P = 0.015, 0.08, 0.005       # pitch PID (x_g units / rad)
 I_MAX_P = 0.005                              # [m of x_g] max |integral term|
 K_YAW = 1.2                                  # yaw err -> roll_ref [rad/rad]
 ROLL_MAX = 0.45                              # [rad] roll_ref saturation
-K_ROLL = 2.0                                 # roll err -> gamma [rad/rad]
+KP_R, KD_R, KI_R = 0.008, 0.0, 0.01          # roll PID (y_g units / rad);
+#                                              KD_R: 0*0.01 in Simulink (off)
+I_MAX_R = 0.004                              # [m of y_g] max |integral term|
 BUOY_SIGN = -1.0
 # BUOY_SIGN maps the FSM's V2 convention (Buoy_ref: +3 dive, -3 climb) to the
 # VBD block's physical dB_ref (negative dB -> less buoyant -> dive).
@@ -99,11 +101,23 @@ def pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt):
 
 
 def roll_control(x, params, roll_ref, roll_ref_dot, mem, dt):
-    """PLACEHOLDER roll P -> rotating mass. Returns (gamma_cmd [rad], mem).
-    Plant sign: gamma > 0 -> roll < 0, hence the minus."""
+    """Roll PID (author's simplified Simulink PID) -> lateral CG y_g ->
+    rotating mass. Returns (gamma_cmd [rad], mem).
+    mem[0] = integral term KI_R * int(e) [m of y_g], limited to +-I_MAX_R.
+    e = ref - measured (opposite to pitch): y_g > 0 rolls the vehicle to +phi
+    (roll moment +W y_g cos(phi) cos(th)), while x_g > 0 pitches it to -th."""
     phi = x[3]
-    gamma_cmd = -K_ROLL * (roll_ref - phi)
-    return gamma_cmd, mem
+    phi_dot = euler_rates(x)[0]          # NOT p (body rate)
+    e = roll_ref - phi
+    de = roll_ref_dot - phi_dot
+    integ = jnp.clip(mem[0] + KI_R * e * dt, -I_MAX_R, I_MAX_R)
+    yg_cmd = KP_R * e + KD_R * de + integ
+    # y_g -> gamma (author's fcn): y_rot = -R_rot sin(gamma), so
+    # y_g = -m_rot R_rot sin(gamma) / m_tot
+    m_tot = params.m_static + params.m_lin + params.m_rot + params.m_pist
+    sin_gamma = jnp.clip(-yg_cmd * m_tot / (params.m_rot * params.R_rot),
+                         -1.0, 1.0)
+    return jnp.arcsin(sin_gamma), mem.at[0].set(integ)
 
 
 def yaw_control(x, params, yaw_ref, yaw_ref_dot, turn_sign, mem, dt):

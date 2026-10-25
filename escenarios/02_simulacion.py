@@ -341,18 +341,21 @@ def figura_control():
     ax[4].plot(t, np.rad2deg(tel["cmds"][:, 1]), "--", label="comando")
     ax[4].plot(t, np.rad2deg(tel["actuators"][:, 1]), label="posición")
     ax[4].set_ylabel("gamma [deg]")
-    # memoria del lazo de pitch; en el provisional mem[0] = aporte integral
-    ax[5].plot(t, tel["ctrl_state"][:, 0] * 1000, label="mem[0] de pitch")
-    lim = getattr(autopilot, "I_MAX_P", None)
-    if lim is not None:
-        for s in (1, -1):
-            ax[5].axhline(s * lim * 1000, color="gray", ls=":", lw=0.8)
-    ax[5].set_ylabel("pitch mem[0]\n[mm de x_g]")
+    # mem[0] de pitch y de roll: el aporte integral (x_g, y_g) y su tope
+    for i, lazo, tope, c in ((0, "pitch (x_g)", "I_MAX_P", "C0"),
+                             (4, "roll (y_g)", "I_MAX_R", "C1")):
+        ax[5].plot(t, tel["ctrl_state"][:, i] * 1000, color=c,
+                   label=f"mem[0] de {lazo}")
+        lim = getattr(autopilot, tope, None)
+        if lim is not None:
+            for s in (1, -1):
+                ax[5].axhline(s * lim * 1000, color=c, ls=":", lw=0.8)
+    ax[5].set_ylabel("mem[0]\n[mm]")
     ax[5].set_xlabel("t [s]")
     for a in ax:
         a.grid(alpha=0.3)
         a.legend(loc="upper right", fontsize=8) if a.get_legend_handles_labels()[0] else None
-    f.suptitle(f"Control modo '{MODO}' (PROVISIONAL): referencia vs respuesta")
+    f.suptitle(f"Control modo '{MODO}': referencia vs respuesta")
     f.tight_layout()
     f.savefig(fig("09_control.png"), dpi=120)
     if not MOSTRAR:

@@ -117,24 +117,25 @@ directo al VBD. Cómo poner tus controladores:
 Agrega la figura `09_control.png`: pitch, roll y rumbo contra la
 referencia **usada** por el controlador (después del moldeado; en modo
 rumbo, la de roll es la que calculó el control de yaw) y contra la de la
-tabla; rc y γ (comando y posición); y `mem[0]` del lazo de pitch (en el
-provisional, el aporte integral, con líneas en ±`I_MAX_P`).
+tabla; rc y γ (comando y posición); y `mem[0]` de los lazos de pitch y
+roll (el aporte integral, con líneas en ±`I_MAX_P` y ±`I_MAX_R`).
 
-Pruebas (2026-10-24, controlador a 0.25 s, pitch con θ̇ − θ̇_ref y aporte
-integral con tope; bitácora entradas 11 y 12), arrancando del reposo a
-200 m con actuadores en neutro:
+Pruebas (2026-10-24, controlador a 0.25 s; pitch con θ̇ − θ̇_ref, aporte
+integral con tope y `KI_P = 0.005`; roll con el PID del autor; bitácora
+entradas 11 a 13), arrancando del reposo a 200 m con actuadores en neutro:
 
 - **`pitch_roll`**, pitch_ref −25°, roll_ref 0° → 15° en t = 200 s:
-  - pitch sobrepasa a −26.1° y se asienta en −25.000° (±0.5° desde
-    t = 33 s);
-  - roll se queda en **9.5°** con referencia 15°: error en estado
-    estacionario del P provisional (sin integral);
-  - con roll sostenido el planeador gira (+0.69 °/s).
+  - pitch sobrepasa a −26.2° y se asienta en −25.000° (±0.5° desde
+    t = 38 s);
+  - roll sobrepasa a **23.3°**, oscila (periodo ~3 s) y queda en 15.000°
+    (±0.5° desde t = 207 s); γ llega a −48° y se queda en −17.3°;
+  - aporte integral de roll: máximo 3.9 mm (tope 4 mm), final 1.8 mm;
+  - con roll sostenido de 15° el planeador gira (+0.99 °/s).
 - **`rumbo`**, rumbo_ref 0° → 45° en t = 200 s:
-  - el rumbo pasa de 44° en t = 264 s y se queda en 45.0°; roll máximo
-    16.8°;
-  - al meter el roll, primero gira 1.3° al lado contrario;
-  - pitch se mantiene entre −25.2° y −24.8° durante el giro.
+  - el rumbo pasa de 44° en t = 249 s y se queda en 45.0°; roll máximo
+    26.4° (la referencia de roll satura en 25.8°);
+  - al meter el roll, primero gira 2.4° al lado contrario;
+  - pitch se mantiene entre −25.4° y −24.7° durante el giro.
 - Con rumbo inicial 90° y referencia 90°, el rumbo se queda en 90.000°
   (sin giro falso).
 

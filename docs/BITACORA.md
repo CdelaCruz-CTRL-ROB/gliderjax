@@ -45,12 +45,56 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
       sin él).
 - [ ] DONE con flotabilidad positiva (confirmar contra V2).
 - [ ] Revisar `FLARE_DEPTH` / `SURF_EPS` contra V2.
-- [ ] Reemplazar controladores provisionales por los bloques de Simulink
-      (`Pitch_control`, `Yaw_control`, `Roll control`).
+- [ ] Reemplazar controladores provisionales por los bloques de Simulink:
+      roll listo (entrada 13); pitch se queda el provisional (entrada 12);
+      falta `Yaw_control`.
 - [ ] Script de misión por waypoints (`escenarios/03_...`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (13) — Roll: PID simplificado del autor
+
+El autor pasó su PID de roll de Simulink:
+
+```
+y_g_control = 0.008*e + 0*0.01*ed + 0.01*ei
+gamma = asin( sat(-(yg * m_total)/(m_rot * r_rot), ±1) )
+```
+
+- `roll_control`: KP_R = 0.008, KD_R = 0 (0*0.01: derivada apagada),
+  KI_R = 0.01. La integral sigue la regla de la entrada 12: se guarda el
+  aporte KI·∫e (m de y_g, `mem[0]` de roll) con tope ±`I_MAX_R`
+  (provisional 4 mm).
+- m_total, m_rot y r_rot salen de los parámetros (58, 5, 0.07), no
+  escritos a mano.
+- ė = φ̇_ref − φ̇ con φ̇ de la cinemática, no p (pedido del autor).
+- **Signo del error: e = φ_ref − φ**, al revés que en pitch. Con
+  e = φ − φ_ref y estas ganancias el lazo diverge: roll −85°, γ en +90°.
+  Razón: y_g > 0 da roll positivo y x_g > 0 da pitch negativo.
+  Confirmar contra Simulink (allí debe ser ref − medido, o haber un signo
+  en otro lado).
+- Se quitó la ganancia del P provisional (`K_ROLL`).
+- `02_simulacion.py`: la figura de control grafica también `mem[0]` de
+  roll.
+
+Resultados (bajada −25°, escalón de roll 0 → 15° en t = 200 s):
+
+- Roll: sobrepaso a 23.3° (55 %), oscila con periodo ~3 s, queda en
+  15.000° desde t = 207 s. Sin error en estado estacionario (antes 9.5°
+  con el P).
+- Aporte integral: sube hasta 3.9 mm (casi el tope de 4) durante la
+  subida del roll; en equilibrio 1.8 mm ≈ z_g·tan 15°. Con KI/KP = 1.25
+  s⁻¹ la integral es rápida comparada con la respuesta: buen candidato
+  para la sintonización. Con `I_MAX_R` = 1 mm el roll se queda en 11.9°.
+- Subida (+25°, roll −15°): simétrico (−23.3°, final −15.000°).
+- Modo rumbo (0 → 45°): pasa 44° en t = 249 s (antes 264 s); roll máximo
+  26.4°.
+
+El autor cambió `KI_P` de 0.003 a 0.005 en `autopilot.py`; los resultados
+de pitch de esta entrada ya lo incluyen (pico −26.2°).
 
 ---
 
