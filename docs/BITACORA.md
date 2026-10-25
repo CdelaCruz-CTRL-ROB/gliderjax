@@ -54,6 +54,48 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 
 ---
 
+## 2026-10-24 (12) — Pitch: θ̇ en lugar de q, derivada de la referencia, integral con tope
+
+Observaciones del autor sobre el PID provisional de pitch:
+
+- **q no es θ̇.** q es la velocidad angular del cuerpo; θ̇ sale de
+  η̇ = J(η)ν (θ̇ = q·cos φ − r·sin φ). La parte D usaba q. Ahora usa θ̇
+  (`euler_rates(x)` en `autopilot.py`). Con φ = 0 son iguales.
+- `e = medido − referencia` es correcto (así está en su controlador).
+- **Integral:** quitar la lógica de anti-windup condicional. Ahora se
+  guarda el aporte I = KI·∫e (m de x_g) y se satura en ±`I_MAX_P`: KI
+  fija la rapidez y `I_MAX_P` el máximo, para ver con claridad cuánto
+  aporta la parte integral.
+
+Duda del autor: ¿derivar el error, o θ̇ − θ̇_ref? Son lo mismo (ė =
+θ̇ − θ̇_ref); lo que cambia es cómo se calcula. Se implementó θ̇ de la
+cinemática (exacta, sin retraso) menos θ̇_ref como diferencia hacia atrás
+de la referencia moldeada (suave). Los tres lazos reciben ahora la
+derivada de su referencia (`*_ref_dot`).
+
+Comparación, bajada a −25° con dB = −3 N desde el reposo a 200 m:
+
+| Parte D | Pico | Asentamiento (±0.5°) | Error máx. vs ref usada | Aporte integral máx. |
+|---|---|---|---|---|
+| KD·(θ̇ − θ̇_ref) | −26.1° | 33 s | 3.9° | 2.6 mm |
+| KD·θ̇ (solo medición) | −30.8° | 63 s | 11.3° | 5.0 mm (topado) |
+
+Con solo θ̇, la parte D frena al planeador mientras la referencia todavía
+se mueve (KD/KP = 5.3 s, y la referencia baja a 0.1 rad/s): se atrasa, el
+integrador se carga y luego sobrepasa. La subida (+25°, dB = +3 N) da lo
+mismo (26.2° contra 30.2°).
+
+El aporte integral en equilibrio es ~2.0 mm de x_g bajando y −2.4 mm
+subiendo (≈ 8–9 mm de rc). Con `I_MAX_P` = 1.5 mm no alcanza: el pitch se
+queda en −22.8° en lugar de −25°. Con el valor provisional (5 mm) el tope
+no se alcanza en estas pruebas.
+
+También: `demos/demo_mission.py` leía la FSM en los índices viejos de
+`ctrl_state` (10, 11, 20:22, 22); quedaron mal desde la entrada 11 (la
+FSM empieza ahora en 24). Corregido.
+
+---
+
 ## 2026-10-24 (11) — Un lazo por función, modos pitch_roll / rumbo, bug del periodo de control
 
 ### Controladores separados

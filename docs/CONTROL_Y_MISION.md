@@ -39,22 +39,34 @@ FSM ─ pitch_ref ─► limitador 0.1 rad/s ─► 1/(5s+1) ─► PID pitch �
 **No son tus bloques `Pitch_control`, `Yaw_control` ni `Roll control` de
 Simulink.** La sesión anterior los puso para que la misión pudiera volar
 mientras llegaban los tuyos. Ganancias: constantes al inicio de
-`autopilot.py` (líneas 41-45). Cada lazo es una función (sección 5).
+`autopilot.py` (líneas 45-50). Cada lazo es una función (sección 5).
 
-**Pitch: PID** (`KP_P = 0.015`, `KD_P = 0.08`, `KI_P = 0.003`)
+**Pitch: PID** (`KP_P = 0.015`, `KD_P = 0.08`, `KI_P = 0.003`,
+`I_MAX_P = 0.005`)
 
 ```
 e      = θ − θ_ref
-x_g    = (1/cos θ) · (KP·e + KD·q + KI·∫e − z_g0·sin θ)
+ė      = θ̇ − θ̇_ref                     (θ̇ de la cinemática, NO q)
+I      = sat(I + KI·e·dt, ±I_MAX)       (aporte integral, en m de x_g)
+x_g    = (1/cos θ) · (KP·e + KD·ė + I − z_g0·sin θ)
 rc_cmd = m_tot · x_g / m_lin
 ```
 
 - La salida es la posición deseada del centro de gravedad, convertida a
   posición de la masa móvil.
 - `−z_g0·sin θ`: compensación de gravedad (z_g0 se calcula de los parámetros).
-- La parte D usa la q medida, no la derivada del error.
-- Anti-windup: el integrador se congela solo si la masa está saturada **y**
-  el error empuja hacia más saturación.
+- **θ̇ no es q.** q es la velocidad angular del cuerpo alrededor de y_b;
+  θ̇ sale de η̇ = J(η)ν: θ̇ = q·cos φ − r·sin φ (`euler_rates(x)`). Solo
+  coinciden con φ = 0.
+- θ̇_ref: diferencia hacia atrás de la referencia moldeada en un periodo
+  de control (la referencia es suave por el moldeado).
+- Integral: se guarda directamente el **aporte** I = KI·∫e (en `mem[0]`,
+  metros de x_g). `KI_P` fija qué tan rápido se mueve y `I_MAX_P` cuánto
+  puede aportar como máximo; ese tope es todo el anti-windup (decisión del
+  autor, entrada 12 de la bitácora). Como el estado se satura, no se
+  acumula integral "escondida" detrás del tope.
+- Con roll el momento de gravedad es −W·(z_g·sin θ + x_g·cos θ·cos φ); la
+  ley ignora el cos φ (≈ 3 % con 15° de roll).
 
 **Yaw: P** (`K_YAW = 1.2`)
 
@@ -158,18 +170,20 @@ poner tu control, reemplazas el cuerpo de la que corresponda:
 
 | Función | Línea | Recibe | Devuelve |
 |---|---|---|---|
-| `pitch_control(x, params, pitch_ref, mem, dt)` | 67 | referencia de pitch [rad] | `rc_cmd` [m] |
-| `roll_control(x, params, roll_ref, mem, dt)` | 89 | referencia de roll [rad] | `gamma_cmd` [rad] |
-| `yaw_control(x, params, yaw_ref, turn_sign, mem, dt)` | 97 | referencia de rumbo [rad] y signo de giro | `roll_ref` [rad] |
+| `pitch_control(x, params, pitch_ref, pitch_ref_dot, mem, dt)` | 83 | referencia de pitch [rad] y su derivada [rad/s] | `rc_cmd` [m] |
+| `roll_control(x, params, roll_ref, roll_ref_dot, mem, dt)` | 101 | referencia de roll [rad] y su derivada | `gamma_cmd` [rad] |
+| `yaw_control(x, params, yaw_ref, yaw_ref_dot, turn_sign, mem, dt)` | 109 | referencia de rumbo [rad], su derivada y signo de giro | `roll_ref` [rad] |
 
-Las tres devuelven además `mem` actualizada. `attitude_step` (línea 106)
-las conecta; no hace falta tocarla.
+Las tres devuelven además `mem` actualizada. `attitude_step` (línea 118)
+las conecta y calcula las derivadas de las referencias; no hace falta
+tocarla.
 
 **Entradas comunes:**
 
 | | Contenido |
 |---|---|
-| `x` | estado verdadero (26): `x[2]` z, `x[3]` φ, `x[4]` θ, `x[5]` ψ, `x[6:9]` u, v, w, `x[9]` p, `x[10]` q, `x[11]` r [m, rad, m/s, rad/s] |
+| `x` | estado verdadero (26): `x[2]` z, `x[3]` φ, `x[4]` θ, `x[5]` ψ, `x[6:9]` u, v, w, `x[9]` p, `x[10]` q, `x[11]` r [m, rad, m/s, rad/s]. **p, q, r son del cuerpo, no las derivadas de los ángulos**: para φ̇, θ̇, ψ̇ usa `euler_rates(x)` (línea 77) |
+| `*_ref_dot` | derivada de la referencia [rad/s]: diferencia hacia atrás en un periodo de control. Pitch y rumbo vienen moldeados (suaves); en modo `pitch_roll` el escalón de roll de la tabla da un pico de escalón/dt en una sola muestra |
 | `params` | todo lo del archivo de configuración (`params.m_lin`, `params.r_lin0`, ...) |
 | `mem` | la **memoria** de ese lazo: `N_MEM = 4` números que se guardan entre llamadas (integradores, valor anterior para una derivada, estado de un filtro). Empieza en 0 |
 | `dt` | periodo del controlador [s] (`PERIODO_CONTROL`) |
@@ -211,10 +225,10 @@ norte, + hacia el este).
 
 | Índices | Contenido |
 |---|---|
-| 0–3 | memoria de pitch (0 = integrador del PID provisional) |
+| 0–3 | memoria de pitch (0 = aporte integral KI·∫e del PID provisional, en m de x_g) |
 | 4–7 | memoria de roll |
 | 8–11 | memoria de yaw |
-| 12, 13, 14 | referencias que usaron los lazos: pitch, roll, yaw [rad] |
+| 12, 13, 14 | referencias que usaron los lazos: pitch, roll, yaw [rad] (también el valor anterior para las derivadas) |
 | 15–23 | estados del moldeado de referencias |
 | 24–39 | solo misión: FSM y último fix GPS |
 

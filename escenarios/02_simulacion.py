@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 from gliderjax import make_simulator, build_initial_state, scope, SOLVERS
 from gliderjax.params import load_config, read_config, G0
 from gliderjax.dynamics import disturbance_zero_equivalent
+from gliderjax import autopilot
 from gliderjax.autopilot import (make_open_loop_controller,
                                  make_attitude_controller, piecewise_schedule)
 
@@ -319,7 +320,7 @@ def figura_control():
                 0, len(tab) - 1)
     ref = tab[i, 1:]                                # [pitch, yaw, roll, dB, sg]
     usada = tel["ctrl_state"][:, 12:15]             # [pitch, roll, yaw]
-    f, ax = plt.subplots(5, 1, figsize=(10, 11), sharex=True)
+    f, ax = plt.subplots(6, 1, figsize=(10, 13), sharex=True)
     ax[0].plot(t, np.rad2deg(tel["eta"][:, 4]), label="pitch")
     ax[0].plot(t, np.rad2deg(usada[:, 0]), label="referencia usada")
     ax[0].plot(t, np.rad2deg(ref[:, 0]), "--", label="tabla")
@@ -340,7 +341,14 @@ def figura_control():
     ax[4].plot(t, np.rad2deg(tel["cmds"][:, 1]), "--", label="comando")
     ax[4].plot(t, np.rad2deg(tel["actuators"][:, 1]), label="posición")
     ax[4].set_ylabel("gamma [deg]")
-    ax[4].set_xlabel("t [s]")
+    # memoria del lazo de pitch; en el provisional mem[0] = aporte integral
+    ax[5].plot(t, tel["ctrl_state"][:, 0] * 1000, label="mem[0] de pitch")
+    lim = getattr(autopilot, "I_MAX_P", None)
+    if lim is not None:
+        for s in (1, -1):
+            ax[5].axhline(s * lim * 1000, color="gray", ls=":", lw=0.8)
+    ax[5].set_ylabel("pitch mem[0]\n[mm de x_g]")
+    ax[5].set_xlabel("t [s]")
     for a in ax:
         a.grid(alpha=0.3)
         a.legend(loc="upper right", fontsize=8) if a.get_legend_handles_labels()[0] else None

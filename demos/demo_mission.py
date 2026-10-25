@@ -37,10 +37,10 @@ print(f"mission sim: {T_SIM:.0f} s in {time.time()-t0:.1f} s (incl. compile)")
 tt = np.asarray(tel["t"])
 eta = np.asarray(tel["eta"])
 cs = np.asarray(tel["ctrl_state"])
-fsm_state = cs[:, 10]
-wp_idx = cs[:, 11]
-Dn = cs[:, 20:22]
-complete = cs[:, 22]
+fsm_state = cs[:, 24]          # FSM carry starts at 24 (autopilot.py layout)
+wp_idx = cs[:, 25]
+Dn = cs[:, 34:36]
+complete = cs[:, 36]
 _, _, _, wps = waypoints_lla_to_ned(MISSION_SQUARE_3KM)
 
 done_i = np.argmax(complete > 0.5) if complete.max() > 0.5 else -1
