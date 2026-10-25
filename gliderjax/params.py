@@ -124,11 +124,10 @@ class GliderParams(NamedTuple):
     gps_sigma_m: jnp.ndarray   # horizontal fix noise 1-sigma [m] (0 = ideal)
     gps_gate_depth: jnp.ndarray  # fixes available only when z < this [m]
     # ----- disturbances & environment ---------------------------------------
-    disturb_xlin: jnp.ndarray  # virtual-zero calibration error of the moving
-    #                            mass [m]: added to r_lin (M, I_b, r_g, W...),
-    #                            unknown to the controller
     m_dist: jnp.ndarray        # unmodeled point mass [kg] (0 = none): enters
-    r_dist: jnp.ndarray        #  M, I_b, r_g and weight; no displaced volume
+    r_dist: jnp.ndarray        #  M, I_b, r_g and weight; no displaced volume;
+    #                            unknown to the controller (equivalent zero
+    #                            errors: dynamics.disturbance_zero_equivalent)
     current_n: jnp.ndarray
 
 

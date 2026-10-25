@@ -23,7 +23,6 @@ p = cidesi_defaults()          # values from config/cidesi.toml (edit there)
 # To change a parameter only for this test, override here.
 # GliderParams is immutable; ._replace() returns a modified copy. Examples:
 #
-# p = p._replace(disturb_xlin=0.005)             # 5 mm virtual-zero error
 # p = p._replace(m_dist=0.5, r_dist=jnp.array([0.3, 0.0, 0.0]))  # 0.5 kg mass
 # p = p._replace(current_n=jnp.array([0.1, -0.05, 0.0]))   # NED current [m/s]
 # p = p._replace(KM=p.KM * 1.10)                # +10% pitch stiffness

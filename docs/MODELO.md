@@ -24,8 +24,7 @@ cada uno. Los switches están en el mismo archivo, como perfiles
 | VBD (pistón, flotabilidad) | Simulink (fcn_VBD_actuator), **verificado** (sección 2.4) | `dynamics.py::vbd_outputs, dxv_from_dB_ref` | siempre |
 | Cadenas de actuadores (prefiltros, limitadores de tasa, TFs) | Simulink, **verificado por el autor** (2026-10-24) | `config/cidesi.toml`, `[actuadores]`; `sim.py::move_actuators` | siempre |
 | Fuerzas de restauración (peso + flotación) | Simulink, **verificado** (sección 2.7) | `dynamics.py::tau_restoring` | siempre |
-| Masa de perturbación (m_dist en r_dist): masa real no modelada | **Agregado** (decisión del autor, reemplaza a dist_xg/dist_yg de Simulink) | `dynamics.py::mass_geometry` | siempre (m_dist = 0 = sin perturbación) |
-| Perturbación de la masa móvil (disturb_xlin): error en el cero virtual del actuador | Simulink (fcn_r_lin, `distxlin`), **verificado** | `dynamics.py::mass_geometry` | siempre (0 = sin perturbación) |
+| Masa de perturbación (m_dist en r_dist): masa real no modelada, también hace de error de calibración | **Agregado** (decisión del autor, reemplaza a distxlin, dist_xg y dist_yg de Simulink) | `dynamics.py::mass_geometry`, `disturbance_zero_equivalent` | siempre (m_dist = 0 = sin perturbación) |
 | Superficie de 2 puntos (B_scale, Δx_b) | Simulink (fcn_buoyancy_surface), **verificado** (sección 2.6) | `dynamics.py::surface_two_point` | `surface_model="simulink"` |
 | **Saturación tanh de α y β** (`A_MAX = 0.44`) | **Agregado por el port. NO está en tu Simulink** | `tau_flowframe` | `use_alpha_saturation` (default **False** desde 2026-10-24) |
 | **Crossflow** (arrastre por flujo cruzado) | **Agregado por el port** | `dynamics.py::tau_crossflow` | `use_crossflow=True` (default) |
@@ -53,11 +52,10 @@ tres apagados, la versión de trabajo da lo mismo que la v1 sin waypoints.
 
 ### Diferencias con Simulink que se dejan a propósito
 
-1. **Perturbaciones**: no se usan `dist_xg`/`dist_yg` (se sumaban a r_g
-   después de armar M: el CG se movía sin que se moviera ninguna masa).
-   Quedan dos perturbaciones, que el control no conoce: `disturb_xlin`
-   (error de calibración del cero virtual, como tu `distxlin`) y una masa
-   de perturbación `m_dist` en `r_dist`. Sección 2.5.
+1. **Perturbaciones**: no se usan `distxlin`, `dist_xg` ni `dist_yg`. Una
+   sola perturbación: la masa de perturbación `m_dist` en `r_dist`, que el
+   control no conoce y que también hace de error de calibración del cero.
+   Sección 2.5.
 2. **Inercia de la masa rotatoria**: el port usa `R·I·Rᵀ`, la consistente
    con la posición de la masa; tu Simulink tiene `Rᵀ·I·R` (error). Decisión
    del autor, 2026-10-24: no replicar el error. Sección 2.2.
@@ -238,76 +236,67 @@ la **mitad de su carrera** (Δx = 0, dB = 0). El VBD suma o resta alrededor
 de ese valor: ±área·carrera/2 = ±0.503 L = ±4.93 N con ρ = 1000. El CB en
 el origen corresponde a ese mismo volumen (`rb_neutral = [0,0,0]`).
 
-### 2.5 Posición de la masa móvil: `fcn_r_lin`
+### 2.5 Posición de la masa móvil y perturbaciones
 
 Referencia: [referencia_simulink/fcn_r_lin.m](referencia_simulink/fcn_r_lin.m)
 (revisado 2026-10-24)
 
 | Simulink | Port (`mass_geometry`) | ¿Igual? |
 |---|---|---|
-| `r_lin = [0.2861 + r_c + distxlin, 0, 0.001]` | `r_lin0 + [rc + disturb_xlin, 0, 0]`, `r_lin0 = [0.2861, 0, 0.001]` | sí (desde 2026-10-24; antes faltaba la perturbación) |
-
-`distxlin` se llama `disturb_xlin` en el port (para no confundir "dist"
-con distancia; por lo mismo, `dist_xg`, `dist_yg` → `disturb_xg`,
-`disturb_yg`).
-
-**Qué representa** (autor, 2026-10-24): que rc no queda donde el control
-cree, es decir, el cero virtual del actuador está mal calculado. Como
-entra en r_lin, pasa por Mbr+Ma fcn y afecta todo: M, I_b, r_g y la
-restauración. El control no la conoce (su compensación de gravedad usa
-`r_lin0` nominal).
+| `r_lin = [0.2861 + r_c + distxlin, 0, 0.001]` | `r_lin0 + [rc, 0, 0]`, `r_lin0 = [0.2861, 0, 0.001]` | sí, sin `distxlin` (ver abajo) |
 
 **Perturbaciones: decisión (autor, 2026-10-24).** Tu Simulink tenía dos
-tipos:
+tipos; el port no usa ninguno de los dos:
 
 | Simulink | Qué hacía | Port |
 |---|---|---|
-| `distxlin` (fcn_r_lin) | mueve la masa móvil respecto a donde cree el control | **se queda**: `disturb_xlin` |
+| `distxlin` (fcn_r_lin) | error en el cero virtual: la masa móvil no queda donde cree el control | **se quita**: la masa de perturbación ya produce ese error (ver abajo) |
 | `dist_xg`, `dist_yg` (Mbr+Ma fcn) | se suman a r_g **después** de armar M: el CG se mueve sin que se mueva ninguna masa; M e I_b no se enteran | **se quita** |
 
-En su lugar, una perturbación real se modela como **masa de
-perturbación**: `m_dist` [kg] en `r_dist` [m] (`[perturbaciones]` del
-archivo de configuración).
+En su lugar, una sola perturbación: la **masa de perturbación** `m_dist`
+[kg] en `r_dist` [m] (`[perturbaciones]` del archivo de configuración).
 
 - Es una quinta masa puntual en `mass_geometry`: entra en M, I_b, r_g y el
   peso, de forma consistente.
 - No desplaza agua: saca al planeador de neutro (`m_dist·g` de flotabilidad
   negativa). Se puede compensar a mano con `V_displaced`, o dejarla para
   ver el efecto.
-- No entra en el cero virtual nominal ni en el control.
-  `00_balance_estatico.py` muestra el cero nominal y, aparte, el efecto de
-  las perturbaciones.
+- No entra en el cero virtual nominal ni en el control. Por eso también
+  hace de **error de calibración**: el control cree que el cero está donde
+  estaba sin la masa.
 - Verificado: 0.7 kg puestos exactamente en la masa móvil (rc = 0) dan lo
   mismo que m_lin + 0.7 kg (diferencia 1e-13).
-- Ejemplo (balance estático): 0.5 kg en x = 0.3 m y `disturb_xlin = 2 mm`
-  piden rc = −12.0 mm para pitch 0 (equivale a mover la masa móvil
-  0.15/15 = 10 mm, más los 2 mm); con rc = 0 el pitch en reposo es −24°.
 
-**Error de calibración y masa de perturbación son casi lo mismo**
-(autor, 2026-10-24). Como el cero virtual se calcula sin la masa de
-perturbación, una `m_dist` ya mete un error de cero que el control no
-conoce. La única diferencia es el peso: un error de calibración mueve el
-CG sin agregar peso; una masa de perturbación agrega `m_dist·g`.
-Comprobado (bajada y subida en lazo abierto, 800 s):
+**Error de cero equivalente** (informativo):
+`dynamics.disturbance_zero_equivalent(p)`. Lo imprimen
+`00_balance_estatico.py` y `02_simulacion.py` cuando `m_dist ≠ 0`:
+
+```
+masa móvil:  d  = m_dist·x_dist / m_lin            (+ = como si estuviera más adelante)
+gamma:       δγ = asin(−m_dist·y_dist / (m_rot·R))  (como si estuviera en γ = δγ con γ = 0 comandado)
+```
+
+Es exacto para los ceros en reposo (pitch 0 y roll 0 solo dependen de
+Σmᵢxᵢ y Σmᵢyᵢ). La componente z de `r_dist` no mueve los ceros, cambia
+BG. Ejemplo: 0.5 kg en (0.3, 0.02, 0) m → +10.000 mm y −1.637°; el
+balance estático da rc para pitch 0 = −10.000 mm respecto al nominal y
+γ para roll 0 = +1.637°.
+
+**Por qué basta la masa** (prueba, 2026-10-24): un error de calibración y
+una masa con el mismo momento solo difieren en el peso. Bajada y subida en
+lazo abierto, 800 s:
 
 | Caso | Pitch bajada | V bajada | Pitch subida | V subida |
 |---|---|---|---|---|
 | nominal | −38.46° | 0.565 | +36.60° | 0.553 |
-| `disturb_xlin = 2 mm` | −41.00° | 0.580 | +33.75° | 0.535 |
+| error de calibración de 2 mm (el `distxlin` de antes) | −41.00° | 0.580 | +33.75° | 0.535 |
 | `m_dist = 0.1 kg` en x = 0.3 m, `V_displaced` + 0.1 L | −41.00° | 0.580 | +33.75° | 0.535 |
 | igual, sin compensar `V_displaced` | −41.36° | 0.670 | +33.40° | 0.437 |
 
 (0.1 kg × 0.3 m = 15 kg × 2 mm.) Con el volumen compensado la diferencia
 máxima es 0.004° en pitch y 6 mm en profundidad; sin compensar domina el
-peso extra (−0.98 N).
-
-Por eso **no se agrega un error de calibración para γ**: una `m_dist` con
-`y ≠ 0` (y `V_displaced` compensado, si se quiere sin peso extra) produce
-el mismo efecto. `disturb_xlin` se queda porque está en tu Simulink y se
-expresa directo en mm del actuador, sin tocar la flotabilidad.
-
-Ejemplo de su efecto: `disturb_xlin = 5 mm` en la prueba de validación lleva
-el pitch de bajada de −38.5° a −44.5° y el de subida de +36.6° a +29.1°.
+peso extra (−0.98 N). Para un error de calibración "puro" (sin peso), se
+compensa `V_displaced` con `m_dist/ρ`.
 
 ### 2.6 Superficie: `fcn_buoyancy_surface`
 

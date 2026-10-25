@@ -88,9 +88,7 @@ def dxv_from_dB_ref(p: GliderParams, dB_ref):
 # vehicle masses plus an optional disturbance point mass m_dist at r_dist
 # ----------------------------------------------------------------------------
 def mass_geometry(p: GliderParams, rc, gamma, dxv):
-    # disturb_xlin: virtual-zero calibration error, the mass is not where
-    # the controller thinks (fcn_r_lin: distxlin)
-    r_lin = p.r_lin0 + jnp.array([rc + p.disturb_xlin, 0.0, 0.0])
+    r_lin = p.r_lin0 + jnp.array([rc, 0.0, 0.0])
     r_rot = jnp.array([p.x_rot,
                        -p.R_rot * jnp.sin(gamma),
                         p.R_rot * jnp.cos(gamma)])
@@ -112,6 +110,23 @@ def mass_geometry(p: GliderParams, rc, gamma, dxv):
            + about_CO(p.I_pist, p.m_pist, r_p)
            + about_CO(jnp.zeros((3, 3)), p.m_dist, p.r_dist))   # point mass
     return m_tot, r_g, I_b
+
+
+def disturbance_zero_equivalent(p: GliderParams):
+    """Informative: actuator zero errors with the same moment as m_dist at
+    r_dist (exact for the at-rest zeros: pitch 0 and roll 0 depend only on
+    sum(m_i x_i) and sum(m_i y_i)).
+    Returns (dx_lin [m], dgamma [rad]):
+      dx_lin = m_dist x_dist / m_lin: as if the moving mass sat dx_lin
+               further forward than the controller thinks;
+      dgamma: as if the rotating mass sat at gamma = dgamma when commanded
+              to 0 (y_rot = -R sin gamma); NaN if the rotating mass cannot
+              produce that moment."""
+    dx_lin = p.m_dist * p.r_dist[0] / p.m_lin
+    s = -p.m_dist * p.r_dist[1] / (p.m_rot * p.R_rot)
+    dgamma = jnp.where(jnp.abs(s) <= 1.0, jnp.arcsin(jnp.clip(s, -1.0, 1.0)),
+                       jnp.nan)
+    return dx_lin, dgamma
 
 
 def M_rigid(m_tot, r_g, I_b):

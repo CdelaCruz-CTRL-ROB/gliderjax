@@ -170,13 +170,12 @@ gps_gate_depth = 0.7        # [m] hay fix solo si z < esto
 # -----------------------------------------------------------------------------
 [perturbaciones]
 # -----------------------------------------------------------------------------
-# Dos tipos, ninguno lo conoce el control:
-# 1) Calibración: el cero virtual de la masa móvil está mal; la masa no
-#    queda donde el control cree (fcn_r_lin: distxlin).
-disturb_xlin = 0.0          # [m] se suma a r_lin -> M, I_b, r_g, restauración
-# 2) Masa real no modelada (lastre, equipo movido, ...): masa puntual con su
-#    posición. Entra en M, I_b, r_g y el peso, pero NO en V_displaced (no
-#    desplaza agua): una masa de perturbación saca al planeador de neutro.
+# Masa de perturbación: masa real no modelada (lastre, equipo movido, ...)
+# como masa puntual con su posición. Entra en M, I_b, r_g y el peso, pero NO
+# en V_displaced (no desplaza agua): saca al planeador de neutro. El control
+# no la conoce y el cero virtual nominal no la incluye, así que también hace
+# de error de calibración: los scripts 00 y 02 imprimen el error de cero
+# equivalente (mm de masa móvil, grados de gamma).
 m_dist = 0.0                # [kg] 0 = sin perturbación
 r_dist = [0.0, 0.0, 0.0]    # [m] posición en el marco cuerpo
 current_n = [0.0, 0.0, 0.0] # [m/s] corriente en NED (norte, este, abajo)

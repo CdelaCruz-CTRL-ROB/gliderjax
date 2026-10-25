@@ -27,8 +27,8 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [x] Vector de restauración verificado (`fcn_restauracion.m`).
 - [x] Cadenas de actuadores verificadas (autor).
 - [x] Switch directo / control en `02_simulacion.py`.
-- [x] Perturbaciones: se quitan `disturb_xg`/`disturb_yg`; quedan
-      `disturb_xlin` (calibración) y la masa de perturbación `m_dist`.
+- [x] Perturbaciones: solo la masa de perturbación `m_dist` (se quitan
+      `distxlin`, `dist_xg`, `dist_yg`); error de cero equivalente informativo.
 - [x] `cg` → `turn_sign` / "signo de giro".
 - [x] Error de calibración en γ: no se agrega; una `m_dist` lateral da el
       mismo efecto (ver [MODELO.md](MODELO.md), sección 2.5).
@@ -51,6 +51,25 @@ El detalle de cada cambio al código está en git (`git log`, `git show <id>`).
 - [ ] Cheat sheet: "quiero cambiar X → dónde" (primera versión en
       [README.md](README.md)).
 - [ ] Futuro: formación de N planeadores.
+
+---
+
+## 2026-10-24 (10) — Se quita disturb_xlin; error de cero equivalente
+
+Decisión del autor: quitar `disturb_xlin`, porque la masa de perturbación
+ya produce el error de cero (entrada 9). En su lugar, una función
+informativa: `dynamics.disturbance_zero_equivalent(p)` da el error de cero
+equivalente a `m_dist` en mm de masa móvil (`m_dist·x_dist/m_lin`) y en
+grados de γ (`asin(−m_dist·y_dist/(m_rot·R))`). La imprimen
+`00_balance_estatico.py` y `02_simulacion.py`.
+
+Verificación:
+
+- Sin perturbación, la validación da exactamente lo mismo (0.0).
+- 0.5 kg en (0.3, 0.02, 0) m: equivalente +10.000 mm y −1.637°; el balance
+  estático, resolviendo el modelo, da rc para pitch 0 de −10.000 mm
+  respecto al nominal y γ para roll 0 de +1.637° (iguales y de signo
+  contrario, como debe ser).
 
 ---
 

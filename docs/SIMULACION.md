@@ -33,7 +33,7 @@ Imprime:
 | FLOTABILIDAD | B con dB = 0 (ρ·g·V_displaced) y con el dB pedido; flotabilidad neta; **V_displaced para ser neutro**; si el VBD alcanza a compensar |
 | CENTROS | CG (con perturbaciones), CB, BG y si es estable |
 | CERO VIRTUAL NOMINAL | sin perturbaciones: posición de la masa móvil para pitch 0 en reposo (dB = 0, γ = 0), comparada con `r_lin0` del archivo, y el rc que hace falta; γ para roll 0 |
-| EFECTO DE LAS PERTURBACIONES | solo si `disturb_xlin` o `m_dist` ≠ 0: rc para pitch 0, pitch en reposo y γ para roll 0, nominal contra real |
+| EFECTO DE LA MASA DE PERTURBACIÓN | solo si `m_dist` ≠ 0: error de cero equivalente (mm de masa móvil, grados de γ); rc para pitch 0, pitch en reposo y γ para roll 0, nominal contra real |
 | EQUILIBRIO | roll y pitch en reposo con los actuadores pedidos |
 
 Figura `out/00_balance_estatico/curvas_reposo.png`: pitch en reposo vs rc
@@ -84,7 +84,8 @@ funciones que la simulación (`mass_geometry`, `vbd_outputs`,
 ### Qué hace al correr
 
 1. Imprime modelo, solver, número de pasos y la flotabilidad neta con
-   dB = 0 (para ver de inmediato si las masas y el volumen no cuadran).
+   dB = 0 (para ver de inmediato si las masas y el volumen no cuadran). Si
+   hay masa de perturbación, imprime su error de cero equivalente.
 2. Simula. Con dt = 0.005 s, 600 s tardan ~4 s.
 3. Guarda en `out/02_simulacion/`: `telemetria.npz`, `entradas.json`
    (todas las variables de las secciones 1 a 4) y `config_usada.toml`. La

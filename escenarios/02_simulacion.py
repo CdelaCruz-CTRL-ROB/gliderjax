@@ -24,6 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from gliderjax import make_simulator, build_initial_state, scope, SOLVERS
 from gliderjax.params import load_config, read_config, G0
+from gliderjax.dynamics import disturbance_zero_equivalent
 from gliderjax.autopilot import (make_open_loop_controller,
                                  make_attitude_controller, piecewise_schedule)
 
@@ -181,9 +182,12 @@ print(f"solver: {SOLVER}, dt = {DT} s, {T_FINAL:.0f} s "
       f"({int(round(T_FINAL / DT))} pasos, {n} muestras cada {MUESTREO} s)")
 print(f"flotabilidad neta con dB = 0: {B0 - m_tot * G0:+.3f} N "
       f"(masas {m_tot:.3f} kg, V_displaced {float(p.V_displaced):.6f} m^3)")
-if float(p.m_dist) or float(p.disturb_xlin):
-    print(f"perturbaciones: disturb_xlin = {float(p.disturb_xlin) * 1000:+.1f} mm, "
-          f"m_dist = {float(p.m_dist):.3f} kg en {np.asarray(p.r_dist)} m")
+if float(p.m_dist):
+    dx, dg = disturbance_zero_equivalent(p)
+    print(f"masa de perturbación: {float(p.m_dist):.3f} kg en "
+          f"{np.asarray(p.r_dist)} m; equivale a un error de cero de "
+          f"{float(dx) * 1000:+.2f} mm en la masa móvil y "
+          f"{np.rad2deg(float(dg)):+.2f}° en gamma")
 
 # ---- simular ----------------------------------------------------------------
 sim = make_simulator(ctrl, cs0, cfg, dt=DT, decimate=decimate,

@@ -6,8 +6,8 @@ Con los parámetros del archivo de configuración calcula:
   - centro de gravedad (CG), centro de flotación (CB) y BG;
   - CERO VIRTUAL de la masa móvil: dónde debe estar para pitch 0 en reposo,
     y el gamma de la masa rotatoria para roll 0. El cero NOMINAL se calcula
-    sin perturbaciones (disturb_xlin, m_dist); aparte se muestra el efecto
-    de las perturbaciones;
+    sin la masa de perturbación (m_dist); aparte se muestra su efecto y el
+    error de cero equivalente;
   - actitud de equilibrio en reposo (sin flujo) para unos actuadores dados;
   - curvas: pitch en reposo vs rc y roll en reposo vs gamma.
 
@@ -32,7 +32,7 @@ import jax.numpy as jnp
 from gliderjax import scope
 from gliderjax.params import load_params, G0
 from gliderjax.dynamics import (mass_geometry, vbd_outputs, dxv_from_dB_ref,
-                                tau_restoring)
+                                tau_restoring, disturbance_zero_equivalent)
 
 # =============================================================================
 # 1) CONFIGURACIÓN
@@ -60,8 +60,8 @@ NOMBRE = "00_balance_estatico"
 OUT = os.path.join(RAIZ, "out", NOMBRE)
 os.makedirs(OUT, exist_ok=True)
 p = load_params(CONFIG)
-p_nom = p._replace(disturb_xlin=0.0 * p.disturb_xlin, m_dist=0.0 * p.m_dist)
-perturbado = bool(float(p.disturb_xlin) or float(p.m_dist))
+p_nom = p._replace(m_dist=0.0 * p.m_dist)
+perturbado = bool(float(p.m_dist))
 gamma = np.deg2rad(GAMMA_DEG)
 
 
@@ -101,7 +101,7 @@ def geometria(rc, gm, dB):
     dxv = float(dxv_from_dB_ref(p, dB))
     m, r_g, _ = mass_geometry(p, rc, gm, dxv)
     B, r_p, x_b = vbd_outputs(p, dxv)
-    r_lin = np.asarray(p.r_lin0) + np.array([rc + float(p.disturb_xlin), 0, 0])
+    r_lin = np.asarray(p.r_lin0) + np.array([rc, 0, 0])
     r_rot = np.array([float(p.x_rot), -float(p.R_rot) * np.sin(gm),
                       float(p.R_rot) * np.cos(gm)])
     return dict(m=float(m), r_g=np.asarray(r_g), B=float(B), x_b=float(x_b),
@@ -117,8 +117,8 @@ print(f"configuración: {os.path.relpath(CONFIG, RAIZ)}")
 print(f"actuadores: rc = {RC * 1000:+.1f} mm, gamma = {GAMMA_DEG:+.1f}°, "
       f"dB = {DB:+.2f} N (pistón {g['dxv'] * 1000:+.1f} mm)")
 if perturbado:
-    print(f"perturbaciones: disturb_xlin = {float(p.disturb_xlin) * 1000:+.2f} mm, "
-          f"m_dist = {float(p.m_dist):.3f} kg en {np.asarray(p.r_dist)} m")
+    print(f"masa de perturbación: {float(p.m_dist):.3f} kg en "
+          f"{np.asarray(p.r_dist)} m")
 print()
 
 print("== MASAS ==")
@@ -175,7 +175,11 @@ except ValueError:
     print("masa rotatoria: ningún gamma en ±90° da roll 0")
 
 if perturbado:
-    print("\n== EFECTO DE LAS PERTURBACIONES (el control no las conoce) ==")
+    print("\n== EFECTO DE LA MASA DE PERTURBACIÓN (el control no la conoce) ==")
+    dx, dg = disturbance_zero_equivalent(p)
+    print(f"error de cero equivalente: masa móvil {float(dx) * 1000:+.3f} mm "
+          f"(+ = más adelante de lo que cree el control), gamma "
+          f"{np.rad2deg(float(dg)):+.3f}°")
     rc0_p = rc_pitch0(p)
     th_p = equilibrio(0.0, 0.0, 0.0)[1]
     print(f"rc para pitch 0: {rc0 * 1000:+.3f} mm nominal -> {rc0_p * 1000:+.3f} mm "
